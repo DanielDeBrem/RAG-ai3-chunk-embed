@@ -107,6 +107,8 @@ class IngestTextRequest(BaseModel):
     document_type: Optional[str] = None  # als None -> classifier gebruiken
     doc_id: str
     text: str
+    chunk_strategy: Optional[str] = None  # als None -> default per document_type
+    chunk_overlap: int = 0  # aantal chars overlap tussen chunks
     metadata: Dict[str, Any] = {}
 
 
@@ -190,23 +192,244 @@ def embed_texts(texts: List[str]) -> np.ndarray:
 
 # ----------------- Helpers: chunking -----------------
 
-def chunk_text(text: str, cfg: ChunkingConfig) -> List[str]:
-    max_chars = cfg.max_chars
+# Chunk strategy configuratie
+CHUNK_STRATEGY_CONFIG = {
+    "default": {"max_chars": 800, "overlap": 0},
+    "page_plus_table_aware": {"max_chars": 1500, "overlap": 200, "respect_pages": True},
+    "semantic_sections": {"max_chars": 1200, "overlap": 150, "split_on_headers": True},
+    "conversation_turns": {"max_chars": 600, "overlap": 0, "split_on_turns": True},
+    "table_aware": {"max_chars": 1000, "overlap": 100, "preserve_tables": True},
+}
+
+
+def chunk_default(text: str, max_chars: int = 800, overlap: int = 0) -> List[str]:
+    """Standaard chunking op paragrafen met optionele overlap."""
     paras = [p.strip() for p in text.split("\n\n") if p.strip()]
     chunks: List[str] = []
     buf = ""
+    
     for p in paras:
         if len(buf) + len(p) + 2 <= max_chars:
             buf = f"{buf}\n\n{p}" if buf else p
         else:
             if buf:
                 chunks.append(buf)
-            buf = p
+                # Overlap: neem laatste deel mee naar volgende chunk
+                if overlap > 0 and len(buf) > overlap:
+                    buf = buf[-overlap:] + "\n\n" + p
+                else:
+                    buf = p
+            else:
+                buf = p
+    
     if buf:
         chunks.append(buf)
     if not chunks and text.strip():
         chunks = [text.strip()]
+    
     return chunks
+
+
+def chunk_page_aware(text: str, max_chars: int = 1500, overlap: int = 200) -> List[str]:
+    """Chunk op pagina grenzen (voor PDF's met [PAGE X] markers)."""
+    import re
+    
+    # Zoek pagina markers
+    pages = re.split(r'\[PAGE \d+\]', text)
+    pages = [p.strip() for p in pages if p.strip()]
+    
+    if not pages:
+        return chunk_default(text, max_chars, overlap)
+    
+    chunks: List[str] = []
+    for i, page in enumerate(pages):
+        page_header = f"[PAGE {i+1}]\n"
+        
+        # Als pagina te lang is, split verder
+        if len(page) > max_chars:
+            sub_chunks = chunk_default(page, max_chars - len(page_header), overlap)
+            for sc in sub_chunks:
+                chunks.append(page_header + sc)
+        else:
+            chunks.append(page_header + page)
+    
+    return chunks
+
+
+def chunk_semantic_sections(text: str, max_chars: int = 1200, overlap: int = 150) -> List[str]:
+    """Chunk op headers/secties (Markdown-achtig)."""
+    import re
+    
+    # Split op headers (# ## ### of === ---)
+    sections = re.split(r'(?m)^(#{1,3}\s+.+|.+\n[=-]{3,})$', text)
+    sections = [s.strip() for s in sections if s.strip()]
+    
+    if len(sections) <= 1:
+        return chunk_default(text, max_chars, overlap)
+    
+    chunks: List[str] = []
+    current_header = ""
+    
+    for section in sections:
+        # Check of dit een header is
+        if re.match(r'^#{1,3}\s+', section) or re.match(r'.+\n[=-]{3,}$', section):
+            current_header = section + "\n\n"
+        else:
+            full_section = current_header + section
+            if len(full_section) > max_chars:
+                sub_chunks = chunk_default(full_section, max_chars, overlap)
+                chunks.extend(sub_chunks)
+            else:
+                chunks.append(full_section)
+    
+    return chunks if chunks else chunk_default(text, max_chars, overlap)
+
+
+def chunk_conversation_turns(text: str, max_chars: int = 600, overlap: int = 0) -> List[str]:
+    """Chunk per conversatie turn (voor chatlogs, coaching sessies)."""
+    import re
+    
+    # Split op speaker patterns: "User:", "Assistant:", "Client:", etc.
+    turns = re.split(r'(?m)^((?:User|Assistant|Client|Therapist|Coach|Coachee|Q|A|Vraag|Antwoord)\s*:)', text, flags=re.IGNORECASE)
+    
+    if len(turns) <= 1:
+        return chunk_default(text, max_chars, overlap)
+    
+    chunks: List[str] = []
+    current_turn = ""
+    
+    for i, part in enumerate(turns):
+        if re.match(r'^(?:User|Assistant|Client|Therapist|Coach|Coachee|Q|A|Vraag|Antwoord)\s*:', part, re.IGNORECASE):
+            if current_turn:
+                chunks.append(current_turn.strip())
+            current_turn = part
+        else:
+            current_turn += part
+    
+    if current_turn:
+        chunks.append(current_turn.strip())
+    
+    # Combineer kleine turns
+    merged: List[str] = []
+    buf = ""
+    for c in chunks:
+        if len(buf) + len(c) + 2 <= max_chars:
+            buf = f"{buf}\n\n{c}" if buf else c
+        else:
+            if buf:
+                merged.append(buf)
+            buf = c
+    if buf:
+        merged.append(buf)
+    
+    return merged if merged else chunks
+
+
+def chunk_table_aware(text: str, max_chars: int = 1000, overlap: int = 100) -> List[str]:
+    """Chunk met tabel-preservatie (houdt tabellen bij elkaar)."""
+    import re
+    
+    # Detecteer tabel-achtige structuren (| col | col | of tabs)
+    lines = text.split('\n')
+    chunks: List[str] = []
+    current_chunk: List[str] = []
+    in_table = False
+    table_buffer: List[str] = []
+    
+    for line in lines:
+        is_table_line = bool(re.match(r'^[\|\+\-].*[\|\+\-]$', line.strip()) or 
+                            '\t' in line and line.count('\t') >= 2)
+        
+        if is_table_line:
+            if not in_table and current_chunk:
+                # Start nieuwe tabel, sla huidige chunk op
+                chunk_text_content = '\n'.join(current_chunk)
+                if chunk_text_content.strip():
+                    chunks.append(chunk_text_content)
+                current_chunk = []
+            in_table = True
+            table_buffer.append(line)
+        else:
+            if in_table and table_buffer:
+                # Einde van tabel, sla op als eigen chunk
+                table_text = '\n'.join(table_buffer)
+                chunks.append(f"[TABLE]\n{table_text}")
+                table_buffer = []
+                in_table = False
+            
+            current_chunk.append(line)
+            
+            # Check lengte
+            if len('\n'.join(current_chunk)) > max_chars:
+                chunk_text_content = '\n'.join(current_chunk[:-1])
+                if chunk_text_content.strip():
+                    chunks.append(chunk_text_content)
+                current_chunk = [current_chunk[-1]] if overlap > 0 else []
+    
+    # Restanten opslaan
+    if table_buffer:
+        chunks.append(f"[TABLE]\n{'\n'.join(table_buffer)}")
+    if current_chunk:
+        chunk_text_content = '\n'.join(current_chunk)
+        if chunk_text_content.strip():
+            chunks.append(chunk_text_content)
+    
+    return chunks if chunks else chunk_default(text, max_chars, overlap)
+
+
+def chunk_text_with_strategy(
+    text: str, 
+    strategy: Optional[str] = None, 
+    document_type: Optional[str] = None,
+    overlap: int = 0
+) -> List[str]:
+    """
+    Hoofd chunking functie die de juiste strategie kiest.
+    
+    Args:
+        text: Te chunken tekst
+        strategy: Expliciete strategie (optioneel)
+        document_type: Document type voor fallback strategie
+        overlap: Override voor overlap (0 = gebruik default)
+    """
+    # Bepaal strategie
+    if not strategy:
+        # Map document_type naar default strategie
+        type_to_strategy = {
+            "annual_report_pdf": "page_plus_table_aware",
+            "jaarrekening": "page_plus_table_aware",
+            "offer_doc": "semantic_sections",
+            "offertes": "semantic_sections",
+            "coaching_doc": "conversation_turns",
+            "coaching_chat": "conversation_turns",
+            "chatlog": "conversation_turns",
+            "review_doc": "default",
+            "google_reviews": "default",
+        }
+        strategy = type_to_strategy.get(document_type, "default")
+    
+    # Haal config
+    config = CHUNK_STRATEGY_CONFIG.get(strategy, CHUNK_STRATEGY_CONFIG["default"])
+    max_chars = config.get("max_chars", 800)
+    default_overlap = config.get("overlap", 0)
+    effective_overlap = overlap if overlap > 0 else default_overlap
+    
+    # Voer strategie uit
+    if strategy == "page_plus_table_aware":
+        return chunk_page_aware(text, max_chars, effective_overlap)
+    elif strategy == "semantic_sections":
+        return chunk_semantic_sections(text, max_chars, effective_overlap)
+    elif strategy == "conversation_turns":
+        return chunk_conversation_turns(text, max_chars, effective_overlap)
+    elif strategy == "table_aware":
+        return chunk_table_aware(text, max_chars, effective_overlap)
+    else:
+        return chunk_default(text, max_chars, effective_overlap)
+
+
+def chunk_text(text: str, cfg: ChunkingConfig) -> List[str]:
+    """Legacy functie voor backward compatibility."""
+    return chunk_default(text, cfg.max_chars)
 
 
 def ingest_text_into_index(
@@ -214,13 +437,36 @@ def ingest_text_into_index(
     document_type: str,
     doc_id: str,
     raw_text: str,
+    chunk_strategy: Optional[str] = None,
+    chunk_overlap: int = 0,
     metadata: Optional[Dict[str, Any]] = None,
 ) -> int:
+    """
+    Ingest tekst in de index met configureerbare chunking strategie.
+    
+    Args:
+        project_id: Project ID
+        document_type: Type document
+        doc_id: Document ID
+        raw_text: Ruwe tekst om te chunken
+        chunk_strategy: Chunking strategie (optioneel, anders op basis van document_type)
+        chunk_overlap: Overlap tussen chunks in chars (optioneel)
+        metadata: Extra metadata
+    """
     if not raw_text.strip():
         return 0
 
-    cfg = get_chunking_config(document_type)
-    chunks = chunk_text(raw_text, cfg)
+    # Gebruik de nieuwe strategie-gebaseerde chunking
+    chunks = chunk_text_with_strategy(
+        text=raw_text,
+        strategy=chunk_strategy,
+        document_type=document_type,
+        overlap=chunk_overlap
+    )
+    
+    if not chunks:
+        return 0
+    
     emb = embed_texts(chunks)
     dim = emb.shape[1]
 
@@ -234,6 +480,7 @@ def ingest_text_into_index(
         **base_meta,
         "project_id": project_id,
         "document_type": document_type,
+        "chunk_strategy": chunk_strategy or "auto",
     }
 
     for i, ch in enumerate(chunks):
@@ -248,8 +495,9 @@ def ingest_text_into_index(
             )
         )
 
+    strategy_used = chunk_strategy or f"auto({document_type})"
     print(
-        f"[AI-3] Ingest project={project_id} type={document_type} "
+        f"[AI-3] Ingest project={project_id} type={document_type} strategy={strategy_used} "
         f"doc_id={doc_id} chunks={len(chunks)} (totaal={len(idx.chunks)})"
     )
     return len(chunks)
@@ -493,6 +741,18 @@ def rag_search(req: SearchRequest):
 
 @app.post("/v1/rag/ingest/text", response_model=IngestResponse)
 def ingest_text_endpoint(req: IngestTextRequest):
+    """
+    Ingest tekst met configureerbare chunking strategie.
+    
+    Beschikbare chunk_strategy waarden:
+    - "default": Standaard paragraaf-gebaseerde chunking (800 chars)
+    - "page_plus_table_aware": Respecteert pagina grenzen en tabellen (PDF's)
+    - "semantic_sections": Split op headers/secties
+    - "conversation_turns": Split op dialoog turns (chatlogs)
+    - "table_aware": Houdt tabellen bij elkaar
+    
+    Als chunk_strategy niet opgegeven, wordt automatisch gekozen op basis van document_type.
+    """
     if not req.project_id:
         raise HTTPException(status_code=400, detail="project_id is verplicht")
 
@@ -507,6 +767,8 @@ def ingest_text_endpoint(req: IngestTextRequest):
         document_type=document_type,
         doc_id=req.doc_id,
         raw_text=req.text,
+        chunk_strategy=req.chunk_strategy,  # ← NIEUW
+        chunk_overlap=req.chunk_overlap,    # ← NIEUW
         metadata=req.metadata,
     )
     return IngestResponse(
@@ -522,8 +784,22 @@ async def ingest_file_endpoint(
     project_id: str = Form(...),
     document_type: Optional[str] = Form(None),
     doc_id: Optional[str] = Form(None),
+    chunk_strategy: Optional[str] = Form(None),  # ← NIEUW
+    chunk_overlap: int = Form(0),                # ← NIEUW
     file: UploadFile = File(...),
 ):
+    """
+    Upload en ingest een bestand met configureerbare chunking.
+    
+    Ondersteunde bestandstypen: PDF, DOCX, XLSX, CSV, TXT, MD
+    
+    chunk_strategy opties:
+    - "default": Standaard chunking
+    - "page_plus_table_aware": PDF met pagina grenzen
+    - "semantic_sections": Headers/secties
+    - "conversation_turns": Chatlogs
+    - "table_aware": Tabel-preservatie
+    """
     data = await file.read()
     text = extract_text_from_file(file.filename, data)
 
@@ -545,6 +821,8 @@ async def ingest_file_endpoint(
         document_type=effective_type,
         doc_id=effective_doc_id,
         raw_text=text,
+        chunk_strategy=chunk_strategy,  # ← NIEUW
+        chunk_overlap=chunk_overlap,    # ← NIEUW
         metadata=meta,
     )
     return IngestResponse(
