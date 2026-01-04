@@ -1,6 +1,7 @@
 import os
 import io
 import glob
+import logging
 from typing import List, Dict, Any, Optional
 
 import numpy as np
@@ -13,6 +14,11 @@ from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 from docx import Document
 from pypdf import PdfReader
+
+# Reranker integratie via HTTP (voorkomt dubbel GPU geheugen)
+import httpx
+
+logger = logging.getLogger(__name__)
 
 # ----------------- Config -----------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -128,10 +134,15 @@ def make_index_key(project_id: str, document_type: str) -> str:
 
 # ----------------- Globals -----------------
 
-app = FastAPI(title="AI-3 DataFactory", version="0.4.0")
+app = FastAPI(title="AI-3 DataFactory", version="0.5.0")
 
 model: SentenceTransformer | None = None
 indices: Dict[str, ProjectDocTypeIndex] = {}
+
+# Reranker config - roept reranker_service aan op :9200
+RERANK_ENABLED = os.getenv("RERANK_ENABLED", "true").lower() == "true"
+RERANK_CANDIDATES = int(os.getenv("RERANK_CANDIDATES", "20"))  # Haal meer op voor reranking
+RERANK_SERVICE_URL = os.getenv("RERANK_SERVICE_URL", "http://localhost:9200")
 
 
 # ----------------- Helpers: model / index -----------------
@@ -329,6 +340,72 @@ def load_initial_corpus():
         )
 
 
+# ----------------- Helpers: reranker (via HTTP naar :9200) -----------------
+
+def check_reranker_available() -> bool:
+    """Check of reranker service beschikbaar is."""
+    if not RERANK_ENABLED:
+        return False
+    try:
+        resp = httpx.get(f"{RERANK_SERVICE_URL}/health", timeout=2.0)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
+def rerank_chunks_via_http(query: str, chunks: List[ChunkHit], top_k: int) -> List[ChunkHit]:
+    """
+    Rerank chunks via HTTP call naar reranker_service op :9200.
+    Retourneert top_k chunks gesorteerd op rerank score.
+    """
+    if not RERANK_ENABLED:
+        return chunks[:top_k]
+    
+    if not chunks:
+        return []
+    
+    # Bouw request payload
+    items_payload = [
+        {"id": c.chunk_id, "text": c.text, "metadata": {}}
+        for c in chunks
+    ]
+    
+    try:
+        resp = httpx.post(
+            f"{RERANK_SERVICE_URL}/rerank",
+            json={"query": query, "items": items_payload, "top_k": top_k},
+            timeout=30.0
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        logger.warning(f"[AI-3] Reranker HTTP call failed: {e} - fallback to vector scores")
+        return chunks[:top_k]
+    
+    # Parse response
+    reranked_items = data.get("items", [])
+    
+    # Maak lookup dict van originele chunks
+    chunk_lookup = {c.chunk_id: c for c in chunks}
+    
+    # Bouw result met rerank scores
+    result: List[ChunkHit] = []
+    for item in reranked_items:
+        orig = chunk_lookup.get(item.get("id"))
+        if orig:
+            result.append(
+                ChunkHit(
+                    doc_id=orig.doc_id,
+                    chunk_id=orig.chunk_id,
+                    text=orig.text,
+                    score=float(item.get("score", 0.0)),
+                    metadata={**orig.metadata, "reranked": True}
+                )
+            )
+    
+    return result
+
+
 # ----------------- FastAPI events -----------------
 
 @app.on_event("startup")
@@ -336,6 +413,14 @@ def on_startup():
     print("[AI-3] Startup – model initialiseren...")
     init_model()
     load_initial_corpus()
+    # Check reranker service
+    if RERANK_ENABLED:
+        if check_reranker_available():
+            print(f"[AI-3] Reranker service beschikbaar op {RERANK_SERVICE_URL}")
+        else:
+            print(f"[AI-3] WAARSCHUWING: Reranker service NIET beschikbaar op {RERANK_SERVICE_URL}")
+    else:
+        print("[AI-3] Reranker is uitgeschakeld via RERANK_ENABLED=false")
     print("[AI-3] Startup klaar.")
 
 
@@ -348,6 +433,14 @@ def health():
 
 @app.post("/v1/rag/search", response_model=SearchResponse)
 def rag_search(req: SearchRequest):
+    """
+    Search met optionele reranking via HTTP naar reranker_service.
+    
+    Flow:
+    1. FAISS vector search → top RERANK_CANDIDATES (default 20)
+    2. HTTP call naar reranker_service:9200 → top_k (default 5)
+    3. Return gerankte resultaten
+    """
     key = make_index_key(req.project_id, req.document_type)
     if key not in indices:
         raise HTTPException(
@@ -362,14 +455,23 @@ def rag_search(req: SearchRequest):
             detail=f"Index '{key}' heeft nog geen data",
         )
 
+    # Stap 1: FAISS search - haal meer candidates op als reranking aan staat
     q_emb = embed_texts([req.question])
-    k = min(max(req.top_k, 1), len(idx.chunks))
-    scores, idxs = idx.index.search(q_emb, k)
+    
+    if RERANK_ENABLED:
+        # Haal meer candidates op voor reranking
+        candidates_k = min(RERANK_CANDIDATES, len(idx.chunks))
+    else:
+        # Geen reranking, haal direct top_k
+        candidates_k = min(max(req.top_k, 1), len(idx.chunks))
+    
+    scores, idxs = idx.index.search(q_emb, candidates_k)
 
-    hits: List[ChunkHit] = []
+    # Bouw candidate hits
+    candidates: List[ChunkHit] = []
     for score, i in zip(scores[0], idxs[0]):
         base = idx.chunks[int(i)]
-        hits.append(
+        candidates.append(
             ChunkHit(
                 doc_id=base.doc_id,
                 chunk_id=base.chunk_id,
@@ -379,7 +481,14 @@ def rag_search(req: SearchRequest):
             )
         )
 
-    return SearchResponse(chunks=hits)
+    # Stap 2: Rerank via HTTP als enabled
+    if RERANK_ENABLED:
+        final_hits = rerank_chunks_via_http(req.question, candidates, req.top_k)
+        print(f"[AI-3] Search+Rerank: {len(candidates)} candidates → {len(final_hits)} results")
+    else:
+        final_hits = candidates[:req.top_k]
+
+    return SearchResponse(chunks=final_hits)
 
 
 @app.post("/v1/rag/ingest/text", response_model=IngestResponse)
