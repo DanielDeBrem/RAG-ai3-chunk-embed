@@ -1,0 +1,74 @@
+# === Algemene rommel / groot spul ===
+.git/
+.gitignore
+.cline/
+.cline-ignore
+.cline-rules
+
+node_modules/
+.env
+.env.*
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Python build / dist
+build/
+dist/
+*.egg-info/
+
+# Logs & tmp
+logs/
+*.log
+tmp/
+.temp/
+.cache/
+*.pid
+
+# Data & modellen (Daan regelt dat zelf wel 😅)
+data/
+datasets/
+data_raw/
+data_tmp/
+checkpoints/
+checkpoints_tmp/
+models/
+model_cache/
+huggingface/
+.huggingface/
+wandb/
+mlruns/
+
+# Grote blobs van andere tools
+*.pt
+*.bin
+*.gguf
+*.safetensors
+*.onnx
+*.ckpt
+*.tar
+*.tar.gz
+*.zip
+
+# RAGflow / oude docker meuk – NIET meer aankomen
+ragflow/
+docker-compose.yml
+docker-compose.override.yml
+docker/
+nginx/
+oceanbase/
+infinity_conf.toml
+entrypoint.sh
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# System dirs die Cline nooit hoeft te zien
+/proc/
+/sys/
+/dev/
+/run/

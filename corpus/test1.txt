@@ -1,0 +1,1 @@
+Dit is een testdocument. Hier kun je even proberen of de RAG-pipeline werkt.

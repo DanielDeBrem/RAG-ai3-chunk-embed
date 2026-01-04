@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+sentence-transformers
+faiss-cpu
+pydantic
+numpy
+torch
+pandas
+python-docx
+openpyxl
+pypdf
+requests
