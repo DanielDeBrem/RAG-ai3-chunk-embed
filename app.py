@@ -18,6 +18,9 @@ from pypdf import PdfReader
 # Reranker integratie via HTTP (voorkomt dubbel GPU geheugen)
 import httpx
 
+# Contextual Embedding enricher
+from contextual_enricher import enrich_chunks_batch, check_context_model_available, CONTEXT_ENABLED
+
 logger = logging.getLogger(__name__)
 
 # ----------------- Config -----------------
@@ -440,9 +443,10 @@ def ingest_text_into_index(
     chunk_strategy: Optional[str] = None,
     chunk_overlap: int = 0,
     metadata: Optional[Dict[str, Any]] = None,
+    enrich_context: bool = True,  # Nieuw: LLM context enrichment
 ) -> int:
     """
-    Ingest tekst in de index met configureerbare chunking strategie.
+    Ingest tekst in de index met configureerbare chunking en LLM context enrichment.
     
     Args:
         project_id: Project ID
@@ -452,6 +456,7 @@ def ingest_text_into_index(
         chunk_strategy: Chunking strategie (optioneel, anders op basis van document_type)
         chunk_overlap: Overlap tussen chunks in chars (optioneel)
         metadata: Extra metadata
+        enrich_context: Of LLM context moet worden toegevoegd (default True)
     """
     if not raw_text.strip():
         return 0
@@ -467,7 +472,30 @@ def ingest_text_into_index(
     if not chunks:
         return 0
     
-    emb = embed_texts(chunks)
+    # === NIEUW: LLM-based Contextual Enrichment ===
+    if enrich_context and CONTEXT_ENABLED:
+        # Bouw document metadata voor context generatie
+        doc_metadata = {
+            "filename": (metadata or {}).get("filename", doc_id),
+            "document_type": document_type,
+            "main_topics": (metadata or {}).get("main_topics", []),
+            "main_entities": (metadata or {}).get("main_entities", []),
+        }
+        
+        print(f"[AI-3] Enriching {len(chunks)} chunks with LLM context...")
+        enriched_chunks = enrich_chunks_batch(chunks, doc_metadata)
+        
+        # Embed de verrijkte chunks
+        emb = embed_texts(enriched_chunks)
+        
+        # Bewaar originele tekst in metadata, verrijkte tekst werd geëmbed
+        original_chunks = chunks
+        chunks = enriched_chunks
+    else:
+        emb = embed_texts(chunks)
+        original_chunks = chunks
+    # === EINDE NIEUW ===
+    
     dim = emb.shape[1]
 
     idx = get_or_create_index(project_id, document_type, dim)
@@ -481,24 +509,31 @@ def ingest_text_into_index(
         "project_id": project_id,
         "document_type": document_type,
         "chunk_strategy": chunk_strategy or "auto",
+        "context_enriched": enrich_context and CONTEXT_ENABLED,
     }
 
     for i, ch in enumerate(chunks):
         chunk_id = f"{doc_id}#c{start_idx + i:04d}"
+        chunk_meta = {**base_meta}
+        # Bewaar ook originele tekst als die verschilt
+        if enrich_context and CONTEXT_ENABLED and i < len(original_chunks):
+            chunk_meta["original_text"] = original_chunks[i]
+        
         idx.chunks.append(
             ChunkHit(
                 doc_id=doc_id,
                 chunk_id=chunk_id,
-                text=ch,
+                text=ch,  # Verrijkte tekst
                 score=0.0,
-                metadata=base_meta,
+                metadata=chunk_meta,
             )
         )
 
     strategy_used = chunk_strategy or f"auto({document_type})"
+    context_status = "with LLM context" if (enrich_context and CONTEXT_ENABLED) else "no context"
     print(
         f"[AI-3] Ingest project={project_id} type={document_type} strategy={strategy_used} "
-        f"doc_id={doc_id} chunks={len(chunks)} (totaal={len(idx.chunks)})"
+        f"doc_id={doc_id} chunks={len(chunks)} ({context_status}) (totaal={len(idx.chunks)})"
     )
     return len(chunks)
 
