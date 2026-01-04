@@ -182,30 +182,31 @@ RAG-ai3-chunk-embed/
 
 AI-3 Server Details:
 - **Hostname**: `principium-ai-3`
-- **IP-adres**: `10.10.10.13`
+- **IP-adres (UTP/LAN)**: `10.0.1.44` ← gebruik dit voor AI-4
+- **IP-adres (10GbE)**: `10.10.10.13` (directe interconnect)
 
 Vanaf AI-4, configureer verbinding naar AI-3:
 
 ```bash
 # In /etc/hosts op AI-4 (aanbevolen)
-10.10.10.13  ai3 principium-ai-3
+10.0.1.44  ai3 principium-ai-3
 
 # Of gebruik directe IP's in de code
-AI3_HOST = "10.10.10.13"
-AI3_ANALYZER_URL = "http://10.10.10.13:9100"
-AI3_DATAFACTORY_URL = "http://10.10.10.13:9000"
-AI3_EMBEDDING_URL = "http://10.10.10.13:8000"
-AI3_RERANKER_URL = "http://10.10.10.13:9200"
+AI3_HOST = "10.0.1.44"
+AI3_ANALYZER_URL = "http://10.0.1.44:9100"
+AI3_DATAFACTORY_URL = "http://10.0.1.44:9000"
+AI3_EMBEDDING_URL = "http://10.0.1.44:8000"
+AI3_RERANKER_URL = "http://10.0.1.44:9200"
 ```
 
 ### Test verbinding vanaf AI-4:
 
 ```bash
 # Test alle services
-curl http://10.10.10.13:9100/health  # Analyzer
-curl http://10.10.10.13:9000/health  # DataFactory
-curl http://10.10.10.13:8000/health  # Embedding
-curl http://10.10.10.13:9200/health  # Reranker
+curl http://10.0.1.44:9100/health  # Analyzer
+curl http://10.0.1.44:9000/health  # DataFactory
+curl http://10.0.1.44:8000/health  # Embedding
+curl http://10.0.1.44:9200/health  # Reranker
 ```
 
 ## 📋 Dependencies
