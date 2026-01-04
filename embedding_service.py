@@ -1,7 +1,52 @@
 from typing import List
 import os
 
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
+
+# ---------- FastAPI App ----------
+
+app = FastAPI(title="AI-3 Embedding Service", version="0.1.0")
+
+
+class EmbedRequest(BaseModel):
+    texts: List[str]
+
+
+class EmbedResponse(BaseModel):
+    embeddings: List[List[float]]
+
+
+class HealthResponse(BaseModel):
+    status: str
+    service: str
+    model: str
+
+
+@app.get("/health", response_model=HealthResponse)
+def health():
+    model_name = os.getenv("EMBED_MODEL_NAME", "BAAI/bge-m3")
+    return HealthResponse(
+        status="ok",
+        service="ai3-embedding",
+        model=model_name
+    )
+
+
+@app.post("/embed", response_model=EmbedResponse)
+def embed_endpoint(req: EmbedRequest):
+    """Embed een lijst van teksten naar vectoren."""
+    try:
+        if not req.texts:
+            raise HTTPException(status_code=400, detail="No texts provided")
+        embeddings = embed_texts(req.texts)
+        return EmbedResponse(embeddings=embeddings)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Embedding failed: {e}")
+
+
+# ---------- Model & Functions ----------
 
 _model = None
 
