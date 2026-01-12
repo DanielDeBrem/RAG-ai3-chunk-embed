@@ -5,17 +5,19 @@ import os
 import re
 from typing import Dict, Any, Optional
 
-import requests
-
 from analyzer_schemas import DocumentAnalysis
 from doc_type_classifier import classify_document
 
-logger = logging.getLogger(__name__)
+# Import LLM70 client voor AI-4 routing
+from llm70_client import (
+    get_llm70_client,
+    LLM70ConnectionError,
+    LLM70TimeoutError,
+    LLM70ResponseError,
+)
+from config.ai3_settings import AI4_FALLBACK_TO_HEURISTICS
 
-# Llama op AI-3 (ollama)
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:70b")
-OLLAMA_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT", "60"))
+logger = logging.getLogger(__name__)
 
 
 def _detect_language(text: str) -> str:
@@ -65,81 +67,188 @@ def _default_chunk_strategy(doc_type: str, has_tables: bool) -> str:
     return "default"
 
 
+def _llm_enrich_heuristic(document: str,
+                          filename: Optional[str],
+                          mime_type: Optional[str]) -> Dict[str, Any]:
+    """
+    Fallback heuristic analysis (snelle versie zonder LLM).
+    Gebruikt simpele keyword matching voor basic classification.
+    """
+    logger.info("Using heuristic fallback for document analysis")
+    
+    lower_text = document[:2000].lower()
+    
+    # Detect domain
+    domain = "general"
+    if any(w in lower_text for w in ["jaarrekening", "balans", "winst", "verlies", "activa", "passiva"]):
+        domain = "finance"
+    elif any(w in lower_text for w in ["offerte", "aanbieding", "prijs", "kosten", "levering"]):
+        domain = "sales"
+    elif any(w in lower_text for w in ["coaching", "coach", "sessie", "ontwikkeling"]):
+        domain = "coaching"
+    elif any(w in lower_text for w in ["review", "beoordeling", "sterren", "rating"]):
+        domain = "reviews"
+    
+    # Detect format from filename/mime
+    format_hint = "unknown"
+    if filename:
+        fn_lower = filename.lower()
+        if fn_lower.endswith(".pdf"):
+            format_hint = "pdf"
+        elif fn_lower.endswith(".docx"):
+            format_hint = "docx"
+        elif fn_lower.endswith(".txt"):
+            format_hint = "txt"
+        elif fn_lower.endswith((".html", ".htm")):
+            format_hint = "html"
+    
+    # Basic entity extraction (uppercase words, likely names)
+    import re
+    entities = []
+    words = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', document[:2000])
+    entities = list(set(words))[:5]  # Max 5 unique
+    
+    # Basic topic extraction (most common meaningful words)
+    topics = []
+    common_words = re.findall(r'\b\w{5,}\b', lower_text)
+    from collections import Counter
+    word_counts = Counter(common_words)
+    # Filter out common Dutch stop words
+    stop_words = {'zoals', 'worden', 'kunnen', 'moeten', 'omdat', 'echter'}
+    topics = [w for w, c in word_counts.most_common(10) if w not in stop_words][:5]
+    
+    return {
+        "entities": entities,
+        "topics": topics,
+        "domain": domain,
+        "extra": {
+            "format": format_hint,
+            "llm_notes": "heuristic_fallback",
+        }
+    }
+
+
+def _llm_enrich_local_8b(document: str,
+                         filename: Optional[str],
+                         mime_type: Optional[str]) -> Dict[str, Any]:
+    """
+    Local 8B LLM fallback via Ollama (Tier 2).
+    Gebruikt bestaande Ollama instances op GPU 2-7.
+    """
+    import httpx
+    import json
+    
+    logger.info(f"Using local Ollama 8B for document analysis: {filename}")
+    
+    # Build analysis prompt
+    prompt = f"""Analyseer dit document grondig en return een JSON object met:
+- document_type: string (annual_report_pdf, offer_doc, chatlog, coaching_doc, review_doc, generic)
+- domain: string (finance, sales, coaching, reviews, general)
+- main_entities: array van strings (bedrijven, personen, organisaties)
+- main_topics: array van strings (kernonderwerpen)
+- has_tables: boolean
+- format: string (pdf, docx, txt, html)
+
+Document: {filename or 'unknown'}
+MIME: {mime_type or 'unknown'}
+Content (eerste 2000 chars):
+{document[:2000]}
+
+Return ALLEEN het JSON object, geen extra tekst."""
+
+    # Try first Ollama instance (port 11434)
+    ollama_url = os.getenv("DOC_ANALYZER_8B_URL", "http://localhost:11434")
+    
+    try:
+        response = httpx.post(
+            f"{ollama_url}/api/generate",
+            json={
+                "model": "llama3.1:8b",
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.1,
+                    "num_predict": 500,
+                },
+            },
+            timeout=30.0
+        )
+        response.raise_for_status()
+        data = response.json()
+        llm_output = data.get("response", "")
+        
+        # Parse JSON from LLM output
+        # LLM kan extra tekst toevoegen, extract JSON
+        import re
+        json_match = re.search(r'\{.*\}', llm_output, re.DOTALL)
+        if json_match:
+            result = json.loads(json_match.group())
+            
+            return {
+                "entities": result.get("main_entities", []),
+                "topics": result.get("main_topics", []),
+                "domain": result.get("domain", "general"),
+                "extra": {
+                    "format": result.get("format", "unknown"),
+                    "document_type_8b": result.get("document_type", "generic"),
+                    "has_tables_8b": result.get("has_tables", False),
+                    "llm_notes": "local_8b",
+                }
+            }
+        else:
+            raise ValueError("No JSON found in LLM response")
+            
+    except Exception as e:
+        logger.warning(f"Local 8B analysis failed: {e}")
+        raise
+
+
 def _llm_enrich(document: str,
                 filename: Optional[str],
                 mime_type: Optional[str]) -> Dict[str, Any]:
-    payload = {
-        "model": OLLAMA_MODEL,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "Je bent een document-analyzer. "
-                    "Geef een korte JSON met:\n"
-                    "- domain: kort domeinwoord (bv. finance, sales, coaching, reviews, general)\n"
-                    "- format_hint: bv. pdf, docx, txt, html\n"
-                    "- entities: lijst van max 5 belangrijke entiteiten (namen/organisaties)\n"
-                    "- topics: lijst van max 5 onderwerpen\n"
-                    "Gebruik Nederlands in waarden waar logisch, maar keys zelf Engelstalig laten."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"Bestandsnaam: {filename or 'onbekend'}\n"
-                    f"MIME type: {mime_type or 'onbekend'}\n\n"
-                    f"CONTENT BEGIN:\n{document[:8000]}\nCONTENT EINDE\n\n"
-                    "Antwoord ALLEEN met JSON, geen uitleg."
-                ),
-            },
-        ],
-        "stream": False,
-        "options": {
-            "temperature": 0.1,
-        },
-    }
-
+    """
+    3-Tier Hybrid Document Enrichment:
+    
+    Tier 1: AI-4 LLM70 (beste kwaliteit, 95%)
+    Tier 2: Local Ollama 8B (goede kwaliteit, 85%)
+    Tier 3: Heuristics (emergency fallback, 40%)
+    """
+    llm_client = get_llm70_client()
+    
+    # Tier 1: AI-4 LLM70 (preferred)
+    if llm_client.enabled:
+        try:
+            logger.info(f"[Tier 1] Calling AI-4 LLM70 for document analysis: {filename}")
+            result = llm_client.analyze_document(
+                document=document,
+                filename=filename,
+                mime_type=mime_type,
+            )
+            logger.info(f"[Tier 1] AI-4 LLM70 analysis successful for {filename}")
+            return result
+            
+        except (LLM70ConnectionError, LLM70TimeoutError) as e:
+            logger.warning(f"[Tier 1] AI-4 unavailable: {e}, trying Tier 2...")
+        except LLM70ResponseError as e:
+            logger.error(f"[Tier 1] AI-4 response error: {e}, trying Tier 2...")
+        except Exception as e:
+            logger.warning(f"[Tier 1] Unexpected AI-4 error: {e}, trying Tier 2...")
+    else:
+        logger.info("[Tier 1] AI-4 LLM70 is disabled, skipping to Tier 2")
+    
+    # Tier 2: Local Ollama 8B (good fallback)
     try:
-        url = f"{OLLAMA_BASE_URL}/v1/chat/completions"
-        resp = requests.post(url, json=payload, timeout=OLLAMA_TIMEOUT)
-        resp.raise_for_status()
-        data = resp.json()
-        content = data["choices"][0]["message"]["content"]
+        logger.info(f"[Tier 2] Using local Ollama 8B for: {filename}")
+        result = _llm_enrich_local_8b(document, filename, mime_type)
+        logger.info(f"[Tier 2] Local 8B analysis successful for {filename}")
+        return result
+        
     except Exception as e:
-        logger.warning("LLM call failed: %s", e)
-        return {"extra": {"llm_error": str(e)}}
-
-    import json
-
-    raw = content.strip()
-    json_str = raw
-    if not raw.startswith("{"):
-        m = re.search(r"\{.*\}", raw, re.DOTALL)
-        if m:
-            json_str = m.group(0)
-
-    try:
-        parsed = json.loads(json_str)
-    except Exception as e:
-        logger.warning("LLM JSON parse failed: %s ; raw=%r", e, raw[:300])
-        return {"extra": {"llm_raw": raw[:500]}}
-
-    result: Dict[str, Any] = {}
-    domain = parsed.get("domain") or parsed.get("domein")
-    format_hint = parsed.get("format_hint") or parsed.get("formaat")
-    entities = parsed.get("entities") or parsed.get("entiteiten") or []
-    topics = parsed.get("topics") or parsed.get("onderwerpen") or []
-
-    extra: Dict[str, Any] = {}
-    if format_hint:
-        extra["format"] = format_hint
-    extra["llm_notes"] = "parsed_by_llama3_70b"
-
-    result["entities"] = entities
-    result["topics"] = topics
-    result["domain"] = domain
-    result["extra"] = extra
-    return result
+        logger.warning(f"[Tier 2] Local 8B failed: {e}, falling back to Tier 3...")
+    
+    # Tier 3: Heuristics (last resort)
+    logger.info(f"[Tier 3] Using heuristic fallback for: {filename}")
+    return _llm_enrich_heuristic(document, filename, mime_type)
 
 
 def _analyze_document_core(document: str,

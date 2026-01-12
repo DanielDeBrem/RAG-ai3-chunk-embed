@@ -2,17 +2,48 @@
 
 Backend services voor de RAG pipeline op AI-3. Deze services worden aangestuurd door AI-4 (orchestrator/webgui).
 
+## 🎯 BELANGRIJKE ARCHITECTUUR REGEL
+
+```
+┌────────────────────────────────────────────────────────────┐
+│ AI-3 = RETRIEVAL ENGINE (parsing, chunking, embeddings)    │
+│ AI-4 = INTELLIGENCE LAYER (chat, answers, extraction)      │
+└────────────────────────────────────────────────────────────┘
+```
+
+**AI-3 DOET:**
+- ✅ Document parsing, OCR, chunking
+- ✅ Embeddings en indexing (FAISS)
+- ✅ Vector search + reranking
+- ❌ **GEEN final answer generation (behalve lokaal testen/fallback)**
+
+**AI-4 DOET:**
+- ✅ **ALLE final answers met llama3.1:70b**
+- ✅ Chat interface
+- ✅ Data extraction en business logic
+
+**Flow:** `User → AI-4 → POST /search (AI-3) → chunks → AI-4 70B → answer → User`
+
+Zie `DOELARCHITECTUUR.md` voor volledige details.
+
+---
+
 ## 🏗️ Architectuur
 
 ```
 AI-4 (Orchestrator)          AI-3 (Processing Backend)
 ┌─────────────────┐          ┌──────────────────────────────────┐
-│ WebGUI          │          │ :9100 - Doc Analyzer (Llama 70B) │
+│ WebGUI          │          │ :9100 - Doc Analyzer             │
 │ User Management │◄────────►│ :9000 - DataFactory (FAISS)      │
 │ 70B Response    │          │ :8000 - Embedding Service        │
 │ Generation      │          │ :9200 - Reranker Service         │
-└─────────────────┘          │ :11434 - Ollama (Llama3.1:70B)   │
+└─────────────────┘          │ :11434 - Ollama (test/fallback)  │
                              └──────────────────────────────────┘
+                             
+         ↑                                    ↑
+         │                                    │
+         └─── AI-4 genereert answers ────────┘
+              AI-3 geeft alleen chunks terug
 ```
 
 ## 📦 Services
@@ -144,7 +175,7 @@ export RERANK_DEVICE="cuda"  # of "cpu"
 
 ```
 RAG-ai3-chunk-embed/
-├── app.py                    # DataFactory met FAISS
+├── app.py                    # DataFactory met FAISS + GPU management
 ├── datafactory_app.py        # Alternatieve DataFactory versie
 ├── main.py                   # Simple in-memory vector store
 ├── embedding_service.py      # BGE-m3 embedding service
@@ -153,14 +184,80 @@ RAG-ai3-chunk-embed/
 ├── doc_type_classifier.py    # Heuristische doc type classificatie
 ├── document_loader.py        # PDF/DOCX/XLSX/TXT loaders
 ├── meta_enricher.py          # LLM enrichment met Llama 70B
+├── contextual_enricher.py    # LLM context enrichment per chunk
 ├── reranker.py               # BGE cross-encoder reranker
 ├── reranker_service.py       # FastAPI wrapper voor reranker
+├── gpu_manager.py            # Hybride GPU orchestratie + cleanup
+├── status_reporter.py        # Webhook status updates naar AI-4
 ├── analyzer_schemas.py       # Pydantic schemas voor analyzer
 ├── rerank_schemas.py         # Pydantic schemas voor reranker
 ├── models.py                 # Algemene Pydantic modellen
 ├── start_AI3_services.sh     # Startup script
 ├── requirements.txt          # Python dependencies
 └── corpus/                   # Test corpus directory
+```
+
+## 🔧 GPU Management
+
+De pipeline ondersteunt hybride GPU orchestratie:
+
+### GPU Manager Features
+- **Smart GPU Selection**: Kiest automatisch GPU met meeste vrije geheugen
+- **Task Tracking**: Houdt bij welke taak actief is op welke GPU
+- **Auto Cleanup**: Maakt GPU geheugen vrij na elke taak
+- **Ollama Integration**: `keep_alive: 0` om modellen direct te unloaden
+
+### Environment Variables
+```bash
+# Webhook naar AI-4 voor status updates
+export AI4_WEBHOOK_URL="http://10.0.1.227:5001/api/webhook/ai3-status"
+export WEBHOOK_ENABLED="true"
+
+# Context enrichment model
+export CONTEXT_MODEL="llama3.1:8b"
+export CONTEXT_ENABLED="true"
+```
+
+### GPU Status Endpoint
+```bash
+# Haal GPU status op
+curl http://ai3:9000/gpu/status
+
+# Forceer GPU cleanup
+curl -X POST http://ai3:9000/gpu/cleanup
+```
+
+## 📡 Status Webhooks naar AI-4
+
+De pipeline stuurt real-time status updates naar AI-4 via webhooks:
+
+### Verwerkingsfases
+| Stage | Beschrijving | Progress % |
+|-------|--------------|------------|
+| `received` | Document ontvangen | 0% |
+| `analyzing` | LLM document analyse | 10% |
+| `chunking` | Tekst splitsen | 25% |
+| `enriching` | LLM context toevoegen | 30-50% |
+| `embedding` | Embeddings genereren | 50-80% |
+| `storing` | Opslaan in FAISS | 85% |
+| `completed` | Klaar | 100% |
+| `failed` | Fout opgetreden | - |
+
+### Webhook Payload Voorbeeld
+```json
+{
+  "source": "ai3",
+  "timestamp": "2026-01-05T14:30:00.000Z",
+  "doc_id": "taxatierapport.pdf",
+  "stage": "embedding",
+  "progress_pct": 65,
+  "message": "Embedding chunk 45/150",
+  "metadata": {
+    "chunks_total": 150,
+    "chunks_done": 45,
+    "model": "BAAI/bge-m3"
+  }
+}
 ```
 
 ## 🔄 RAG Flow
@@ -172,11 +269,14 @@ RAG-ai3-chunk-embed/
 4. POST chunks naar AI-3:9000/ingest
 5. AI-3 embed en opslaan in FAISS
 
-### Query Flow (AI-4 → AI-3)
+### Query Flow (AI-4 → AI-3) ⚠️ KRITIEK
 1. User query op AI-4
-2. POST query naar AI-3:9000/search (vector search)
-3. POST resultaten naar AI-3:9200/rerank
-4. AI-4 gebruikt top results voor response generation
+2. AI-4: POST query naar AI-3:9000/search (vector search)
+3. AI-4: POST resultaten naar AI-3:9200/rerank
+4. **AI-4: Generate answer met llama3.1:70b** ← AI-4 verantwoordelijkheid!
+5. AI-4: Show answer to user
+
+**BELANGRIJK:** AI-3 geeft ALLEEN chunks terug, AI-4 genereert het antwoord!
 
 ## 🌐 Netwerk Setup voor AI-4
 
@@ -221,3 +321,17 @@ Belangrijkste packages:
 - faiss-cpu
 - torch
 - pypdf, python-docx, openpyxl
+
+---
+
+## 📚 Documentatie
+
+- **`DOELARCHITECTUUR.md`** - Volledige uitleg van AI-3/AI-4 scheiding
+- **`ARCHITECTURE.md`** - Technische architectuur details
+- **`AI4_INTEGRATION_GUIDE.md`** - Integratie instructies voor AI-4
+- **`DATAFACTORY_API_SPEC.md`** - API specificaties
+- **`CHUNKING_STRATEGIES_README.md`** - Chunking strategieën
+
+---
+
+**Laatste update:** 12 januari 2026

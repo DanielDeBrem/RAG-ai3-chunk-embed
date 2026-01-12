@@ -1,5 +1,38 @@
 # AI-4 Integration Guide - DataFactory API Usage
 
+## 🎯 BELANGRIJKE ARCHITECTUUR REGEL
+
+### Role Clarity
+```
+┌─────────────────────────────────────────────────────────┐
+│ AI-3 = RETRIEVAL ENGINE (parsing, chunking, embeddings) │
+│ AI-4 = INTELLIGENCE LAYER (chat, answers, extraction)   │
+└─────────────────────────────────────────────────────────┘
+```
+
+**AI-3 (DataFactory) DOET:**
+- ✅ Document parsing, OCR, chunking
+- ✅ Embeddings en indexing (FAISS)
+- ✅ Vector search + reranking (RAG retrieval)
+- ❌ **GEEN final answers genereren**
+- ❌ **GEEN chat interface**
+- ❌ **GEEN data extractie voor business logic**
+
+**AI-4 (Jouw Server) DOET:**
+- ✅ Chat interface met gebruikers
+- ✅ **Final answer generation met llama3.1:70b**
+- ✅ Data extractie en business logic
+- ✅ Context building van AI-3 chunks
+
+**KRITIEKE FLOW:**
+```
+User vraag → AI-4 → POST /search (AI-3) → chunks → AI-4 70B → answer → User
+```
+
+**AI-3 geeft ALLEEN chunks terug, NOOIT final answers!**
+
+---
+
 ## 📋 Instructie Voor Cline Op AI-4
 
 **Kopieer dit naar Cline op AI-4:**
@@ -9,6 +42,8 @@
 ## RAG DataFactory Integration (AI-3 Server)
 
 Je hebt toegang tot een high-performance RAG DataFactory op **AI-3 server** voor document processing en vector search.
+
+**LET OP:** AI-3 is een RETRIEVAL ENGINE, geen answer generator. Jij (AI-4) bent verantwoordelijk voor alle final answers met je 70B model.
 
 ### 🔌 API Endpoints
 
@@ -215,6 +250,9 @@ context = "\n\n".join([chunk["text"] for chunk in chunks])
 
 ### Step 3: Generate Answer with llama3.1:70b (AI-4)
 ```python
+# ✅ THIS IS YOUR RESPONSIBILITY (AI-4)!
+# AI-3 only provided chunks, YOU generate the final answer with 70B
+
 # Use retrieved context to generate answer with 70B model
 prompt = f"""Je bent een assistent die vragen beantwoordt op basis van documenten.
 
@@ -225,12 +263,17 @@ Vraag: {query}
 
 Geef een gedetailleerd antwoord op basis van de context."""
 
-# Call Ollama 70B on AI-4
+# ✅ Call Ollama 70B on AI-4 (NOT on AI-3!)
 answer = ollama.generate(model="llama3.1:70b", prompt=prompt)
 
 # Show user the answer
 display_answer(answer)
 ```
+
+**KRITIEK:** 
+- Deze stap gebeurt op AI-4, NIET op AI-3
+- AI-3 heeft GEEN endpoint voor answer generation
+- Als je een answer endpoint op AI-3 ziet, is dat alleen voor lokaal testen (fallback)
 
 ---
 
@@ -376,13 +419,20 @@ for chunk in search_result["chunks"]:
 ✅ **Deduplication** - Automatic chunk deduplication
 ✅ **Multi-tenant** - Tenant and project isolation
 ✅ **GPU Optimized** - 8x GPU's (1 for embedding, 6 for enrichment)
+✅ **Retrieval Only** - Returns chunks with scores, NOT answers
 
 **What AI-4 Should Provide:**
 
 ✅ **User Interface** - Upload, query, display answers
-✅ **LLM Generation** - llama3.1:70b for final answers
+✅ **LLM Generation** - llama3.1:70b for **ALL final answers**
 ✅ **Context Management** - Build prompts from retrieved chunks
 ✅ **User Experience** - Progress, errors, source citations
+✅ **Business Logic** - Data extraction, workflows, decision making
+
+**BELANGRIJK:** 
+- AI-3 geeft alleen chunks terug (raw retrieval)
+- AI-4 genereert ALTIJD de final answer met 70B
+- Geen uitzonderingen op deze regel in productie
 
 ---
 
@@ -532,6 +582,12 @@ BELANGRIJKE DETAILS:
 - Processing duurt 30s voor kleine docs, 5-10 min voor grote docs (45MB+)
 - DataFactory draait 6 GPU's parallel voor enrichment
 - Embeddings zijn contextually enriched (LLM-enhanced)
+
+🚨 KRITIEKE ARCHITECTUUR REGEL:
+- AI-3 DataFactory = RETRIEVAL ONLY (chunks teruggeven)
+- AI-4 = ANSWER GENERATION (70B model voor final answers)
+- AI-3 mag GEEN final answers genereren (behalve lokale test fallback)
+- Alle gebruikersvragen → AI-4 → search AI-3 → answer met 70B → user
 
 IMPLEMENTATIE:
 1. Maak DataFactory client class:

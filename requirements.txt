@@ -10,3 +10,10 @@ python-docx
 openpyxl
 pypdf
 requests
+sqlalchemy
+pytest
+httpx
+
+# OCR dependencies
+pytesseract>=0.3.10
+pdf2image>=1.17.0
