@@ -40,6 +40,11 @@ from status_reporter import (
     report_completed, report_failed, StatusReporter
 )
 
+# Pipeline Improvements V2
+from hybrid_search import HybridRetriever
+from parent_child_chunking import ParentChildChunker
+from hyde_generator import HyDEGenerator, SimpleQuestionGenerator
+
 logger = logging.getLogger(__name__)
 
 # ----------------- Config -----------------
@@ -227,6 +232,23 @@ DISABLE_STARTUP_CORPUS_LOAD = os.getenv("DISABLE_STARTUP_CORPUS_LOAD", "true").l
 RERANK_ENABLED = os.getenv("RERANK_ENABLED", "true").lower() == "true"
 RERANK_CANDIDATES = int(os.getenv("RERANK_CANDIDATES", "20"))  # Haal meer op voor reranking
 RERANK_SERVICE_URL = os.getenv("RERANK_SERVICE_URL", "http://localhost:9200")
+
+# Pipeline Improvements V2 - Configuration
+HYBRID_SEARCH_ENABLED = os.getenv("HYBRID_SEARCH_ENABLED", "true").lower() == "true"
+HYBRID_DENSE_WEIGHT = float(os.getenv("HYBRID_DENSE_WEIGHT", "0.7"))
+HYBRID_SPARSE_WEIGHT = float(os.getenv("HYBRID_SPARSE_WEIGHT", "0.3"))
+
+PARENT_CHILD_ENABLED = os.getenv("PARENT_CHILD_ENABLED", "false").lower() == "true"
+PARENT_MAX_CHARS = int(os.getenv("PARENT_MAX_CHARS", "1200"))
+CHILD_MAX_CHARS = int(os.getenv("CHILD_MAX_CHARS", "400"))
+
+HYDE_ENABLED = os.getenv("HYDE_ENABLED", "false").lower() == "true"
+HYDE_NUM_QUESTIONS = int(os.getenv("HYDE_NUM_QUESTIONS", "3"))
+
+# Global instances (initialized on first use)
+hybrid_retriever: Optional[HybridRetriever] = None
+parent_child_chunker: Optional[ParentChildChunker] = None
+hyde_generator: Optional[HyDEGenerator] = None
 
 
 # ----------------- Helpers: model / index -----------------
@@ -1090,13 +1112,17 @@ def embedder_unload():
 @app.post("/v1/rag/search", response_model=SearchResponse)
 def rag_search(req: SearchRequest):
     """
-    Search met optionele reranking via HTTP naar reranker_service.
+    Search met Pipeline Improvements V2:
+    1. FAISS vector search → candidates
+    2. [NEW] Hybrid Search (Dense + BM25) → combines vector + keyword scores
+    3. Reranking via HTTP → final top_k
     
-    Flow:
-    1. FAISS vector search → top RERANK_CANDIDATES (default 20)
-    2. HTTP call naar reranker_service:9200 → top_k (default 5)
-    3. Return gerankte resultaten
+    Features:
+    - Hybrid Search: Combines semantic similarity + exact keyword matching
+    - Reranking: Cross-encoder rescoring via reranker service
     """
+    global hybrid_retriever
+    
     key = make_index_key(req.project_id, req.document_type)
     if key not in indices:
         raise HTTPException(
@@ -1114,21 +1140,22 @@ def rag_search(req: SearchRequest):
             detail=f"Index '{key}' heeft nog geen data",
         )
 
-    # Stap 1: FAISS search - haal meer candidates op als reranking aan staat
+    # Stap 1: FAISS vector search - get more candidates for hybrid/rerank
     q_emb = embed_texts([req.question])
 
-    if RERANK_ENABLED:
+    # Get enough candidates for both hybrid search and reranking
+    if HYBRID_SEARCH_ENABLED or RERANK_ENABLED:
         candidates_k = min(RERANK_CANDIDATES, len(idx.chunks))
     else:
         candidates_k = min(max(req.top_k, 1), len(idx.chunks))
 
     scores, idxs = idx.index.search(q_emb, candidates_k)
 
-    # Bouw candidate hits
-    candidates: List[ChunkHit] = []
+    # Bouw FAISS candidate hits
+    faiss_candidates: List[ChunkHit] = []
     for score, i in zip(scores[0], idxs[0]):
         base = idx.chunks[int(i)]
-        candidates.append(
+        faiss_candidates.append(
             ChunkHit(
                 doc_id=base.doc_id,
                 chunk_id=base.chunk_id,
@@ -1138,10 +1165,60 @@ def rag_search(req: SearchRequest):
             )
         )
 
-    # Stap 2: Rerank via HTTP als enabled
+    # Stap 2: Hybrid Search (Dense + BM25) - NIEUWE FEATURE
+    if HYBRID_SEARCH_ENABLED:
+        # Initialize hybrid retriever on first use (lazy init)
+        if hybrid_retriever is None:
+            hybrid_retriever = HybridRetriever(
+                dense_weight=HYBRID_DENSE_WEIGHT,
+                sparse_weight=HYBRID_SPARSE_WEIGHT,
+                rrf_k=60
+            )
+            # Index all chunks for BM25
+            all_chunks_for_bm25 = [
+                {"chunk_id": c.chunk_id, "text": c.text, "metadata": c.metadata}
+                for c in idx.chunks
+            ]
+            hybrid_retriever.index_chunks(all_chunks_for_bm25)
+            print(f"[AI-3] Hybrid Search initialized for index '{key}' ({len(idx.chunks)} chunks)")
+        
+        # Convert FAISS results to format expected by hybrid retriever
+        dense_results = [(c.chunk_id, c.score) for c in faiss_candidates]
+        
+        # Hybrid search combines dense (FAISS) + sparse (BM25)
+        hybrid_results = hybrid_retriever.search(
+            query=req.question,
+            dense_results=dense_results,
+            top_k=candidates_k  # Keep same number for reranking
+        )
+        
+        # Convert back to ChunkHit format
+        candidates = []
+        for hr in hybrid_results:
+            candidates.append(
+                ChunkHit(
+                    doc_id=hr.metadata.get("doc_id", hr.chunk_id.split("#")[0]),
+                    chunk_id=hr.chunk_id,
+                    text=hr.text,
+                    score=hr.combined_score,
+                    metadata={**hr.metadata, "hybrid_scores": {
+                        "combined": hr.combined_score,
+                        "dense": hr.dense_score,
+                        "sparse": hr.sparse_score
+                    }}
+                )
+            )
+        
+        print(f"[AI-3] Hybrid Search: {len(faiss_candidates)} FAISS → {len(candidates)} hybrid results")
+    else:
+        # Use FAISS results directly
+        candidates = faiss_candidates
+
+    # Stap 3: Rerank via HTTP als enabled
     if RERANK_ENABLED:
         final_hits = rerank_chunks_via_http(req.question, candidates, req.top_k)
-        print(f"[AI-3] Search+Rerank: {len(candidates)} candidates → {len(final_hits)} results")
+        mode_str = "Hybrid+Rerank" if HYBRID_SEARCH_ENABLED else "FAISS+Rerank"
+        print(f"[AI-3] {mode_str}: {len(candidates)} candidates → {len(final_hits)} results")
     else:
         final_hits = candidates[:req.top_k]
 
