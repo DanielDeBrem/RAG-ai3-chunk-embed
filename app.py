@@ -2,7 +2,9 @@ import os
 import io
 import glob
 import logging
-from typing import List, Dict, Any, Optional
+import time
+from typing import List, Dict, Any, Optional, Set
+from datetime import datetime
 
 import numpy as np
 import faiss
@@ -20,6 +22,23 @@ import httpx
 
 # Contextual Embedding enricher
 from contextual_enricher import enrich_chunks_batch, check_context_model_available, CONTEXT_ENABLED
+
+# GPU Manager voor simple cleanup (binnen process only)
+from gpu_manager import gpu_manager
+import gc
+
+# NOTE: Cleanup done - removed parallel_embedder and gpu_phase_lock
+# Using simple single-GPU embedding on GPU 0 (via CUDA_VISIBLE_DEVICES)
+
+# Modular Chunking Strategies
+from chunking_strategies import chunk_text as chunk_text_modular, list_strategies, detect_strategy
+
+# Status Reporter voor webhooks naar AI-4
+from status_reporter import (
+    report_received, report_analyzing, report_chunking,
+    report_enriching, report_embedding, report_storing,
+    report_completed, report_failed, StatusReporter
+)
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +113,22 @@ class ChunkHit(BaseModel):
     metadata: Dict[str, Any] = {}
 
 
+def _normalize_text_for_hash(text: str) -> str:
+    """Normalize text for stable dedupe hashing."""
+    import re
+
+    t = (text or "").strip()
+    t = re.sub(r"\s+", " ", t)
+    return t
+
+
+def _chunk_hash(text: str) -> str:
+    import hashlib
+
+    norm = _normalize_text_for_hash(text)
+    return hashlib.sha256(norm.encode("utf-8", errors="ignore")).hexdigest()
+
+
 class SearchRequest(BaseModel):
     project_id: str
     document_type: str
@@ -122,6 +157,42 @@ class IngestResponse(BaseModel):
     chunks_added: int
 
 
+# ============================================
+# AI-4 Compatible Schemas (Simplified)
+# ============================================
+
+class SimpleIngestRequest(BaseModel):
+    """
+    Simplified ingest request voor AI-4 orchestrator.
+    Maps naar internal v1 format.
+    """
+    tenant_id: str
+    project_id: str
+    user_id: Optional[str] = None
+    filename: str
+    mime_type: Optional[str] = None
+    text: str
+    document_type: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    chunk_strategy: Optional[str] = None
+    chunk_overlap: int = 0
+
+
+class SimpleSearchRequest(BaseModel):
+    """
+    Simplified search request voor AI-4 orchestrator.
+    Maps naar internal v1 format.
+    Accepteert zowel 'question' als 'query'.
+    """
+    tenant_id: str
+    project_id: str
+    user_id: Optional[str] = None
+    query: Optional[str] = None  # Alias voor question
+    question: Optional[str] = None  # Alias voor query
+    document_type: str = "generic"
+    top_k: int = 5
+
+
 # ----------------- Index Struct -----------------
 
 class ProjectDocTypeIndex:
@@ -131,6 +202,8 @@ class ProjectDocTypeIndex:
         self.document_type = document_type
         self.index = faiss.IndexFlatIP(dim)
         self.chunks: List[ChunkHit] = []
+        # Exact dedupe: track hashes of raw chunks already stored
+        self.chunk_hashes: Set[str] = set()
 
 
 def make_index_key(project_id: str, document_type: str) -> str:
@@ -144,6 +217,12 @@ app = FastAPI(title="AI-3 DataFactory", version="0.5.0")
 model: SentenceTransformer | None = None
 indices: Dict[str, ProjectDocTypeIndex] = {}
 
+# Als je 70B analyzer écht alle GPU's wilt laten claimen zonder CPU offload,
+# wil je dat DataFactory niet continu een embedding model resident op GPU houdt.
+AUTO_UNLOAD_EMBEDDER = os.getenv("AUTO_UNLOAD_EMBEDDER", "true").lower() == "true"
+DISABLE_STARTUP_EMBED_WARMUP = os.getenv("DISABLE_STARTUP_EMBED_WARMUP", "true").lower() == "true"
+DISABLE_STARTUP_CORPUS_LOAD = os.getenv("DISABLE_STARTUP_CORPUS_LOAD", "true").lower() == "true"
+
 # Reranker config - roept reranker_service aan op :9200
 RERANK_ENABLED = os.getenv("RERANK_ENABLED", "true").lower() == "true"
 RERANK_CANDIDATES = int(os.getenv("RERANK_CANDIDATES", "20"))  # Haal meer op voor reranking
@@ -153,12 +232,25 @@ RERANK_SERVICE_URL = os.getenv("RERANK_SERVICE_URL", "http://localhost:9200")
 # ----------------- Helpers: model / index -----------------
 
 def init_model():
+    """
+    Initialiseer het embedding model op GPU 0 (via CUDA_VISIBLE_DEVICES).
+    Simpel en stabiel - dedicated GPU per taak.
+    """
     global model
     if model is not None:
         return
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"[AI-3] Laad embed-model {EMBED_MODEL_NAME} op {device}")
-    model = SentenceTransformer(EMBED_MODEL_NAME, device=device)
+    
+    print(f"[AI-3] Laad embed-model {EMBED_MODEL_NAME} op GPU 0...")
+    
+    try:
+        # Direct laden op cuda (= GPU 0 via CUDA_VISIBLE_DEVICES pinning)
+        model = SentenceTransformer(EMBED_MODEL_NAME, device="cuda")
+        print(f"[AI-3] Embed model geladen op GPU")
+    except Exception as e:
+        # Fallback naar CPU bij problemen
+        logger.warning(f"[AI-3] GPU load failed: {e}, using CPU")
+        model = SentenceTransformer(EMBED_MODEL_NAME, device="cpu")
+        print(f"[AI-3] Embed model geladen op CPU (fallback)")
 
 
 def get_or_create_index(project_id: str, document_type: str, dim: int) -> ProjectDocTypeIndex:
@@ -181,31 +273,83 @@ def get_or_create_index(project_id: str, document_type: str, dim: int) -> Projec
 
 
 def embed_texts(texts: List[str]) -> np.ndarray:
+    """
+    Embed teksten op GPU 0 (via CUDA_VISIBLE_DEVICES).
+    Simpel en stabiel - dedicated GPU per taak.
+    """
+    global model
     if not texts:
         raise ValueError("Geen teksten om te embedden")
+    
+    # Ensure model is loaded
     init_model()
-    emb = model.encode(
-        texts,
-        batch_size=32,
-        normalize_embeddings=True,
-        show_progress_bar=False,
-    )
-    return np.asarray(emb, dtype="float32")
+    
+    try:
+        # Encode op dedicated GPU 0
+        emb = model.encode(
+            texts,
+            batch_size=32,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+        return np.asarray(emb, dtype="float32")
+    except torch.cuda.OutOfMemoryError:
+        # OOM fallback naar CPU
+        logger.warning("[AI-3] GPU 0 OOM, fallback to CPU")
+        gpu_manager.cleanup_pytorch()
+        model = model.to("cpu")
+        emb = model.encode(
+            texts,
+            batch_size=16,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+        return np.asarray(emb, dtype="float32")
+    finally:
+        # Light cleanup
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 # ----------------- Helpers: chunking -----------------
 
-# Chunk strategy configuratie
-CHUNK_STRATEGY_CONFIG = {
-    "default": {"max_chars": 800, "overlap": 0},
-    "page_plus_table_aware": {"max_chars": 1500, "overlap": 200, "respect_pages": True},
-    "semantic_sections": {"max_chars": 1200, "overlap": 150, "split_on_headers": True},
-    "conversation_turns": {"max_chars": 600, "overlap": 0, "split_on_turns": True},
-    "table_aware": {"max_chars": 1000, "overlap": 100, "preserve_tables": True},
-}
-
+# NOTE: Chunking logic moved to chunking_strategies.py
+# This function is now a thin wrapper around the modular system
 
 def chunk_default(text: str, max_chars: int = 800, overlap: int = 0) -> List[str]:
+    """Legacy wrapper - gebruik chunking_strategies module."""
+    from chunking_strategies import chunk_text as chunk_modular
+    return chunk_modular(text, strategy="default", config={"max_chars": max_chars, "overlap": overlap})
+
+
+# Legacy functions for backward compatibility (redirect to new module)
+def chunk_page_aware(text: str, max_chars: int = 1500, overlap: int = 200) -> List[str]:
+    """Legacy wrapper."""
+    from chunking_strategies import chunk_text as chunk_modular
+    return chunk_modular(text, strategy="page_plus_table_aware", config={"max_chars": max_chars, "overlap": overlap})
+
+
+def chunk_semantic_sections(text: str, max_chars: int = 1200, overlap: int = 150) -> List[str]:
+    """Legacy wrapper."""
+    from chunking_strategies import chunk_text as chunk_modular
+    return chunk_modular(text, strategy="semantic_sections", config={"max_chars": max_chars, "overlap": overlap})
+
+
+def chunk_conversation_turns(text: str, max_chars: int = 600, overlap: int = 0) -> List[str]:
+    """Legacy wrapper."""
+    from chunking_strategies import chunk_text as chunk_modular
+    return chunk_modular(text, strategy="conversation_turns", config={"max_chars": max_chars, "overlap": overlap})
+
+
+def chunk_table_aware(text: str, max_chars: int = 1000, overlap: int = 100) -> List[str]:
+    """Legacy wrapper."""
+    from chunking_strategies import chunk_text as chunk_modular
+    return chunk_modular(text, strategy="table_aware", config={"max_chars": max_chars, "overlap": overlap})
+
+
+# Main chunking function - now uses modular system
+def chunk_default_old(text: str, max_chars: int = 800, overlap: int = 0) -> List[str]:
     """Standaard chunking op paragrafen met optionele overlap."""
     paras = [p.strip() for p in text.split("\n\n") if p.strip()]
     chunks: List[str] = []
@@ -387,47 +531,24 @@ def chunk_text_with_strategy(
     overlap: int = 0
 ) -> List[str]:
     """
-    Hoofd chunking functie die de juiste strategie kiest.
+    Hoofd chunking functie - nu via modular chunking_strategies module.
     
     Args:
         text: Te chunken tekst
-        strategy: Expliciete strategie (optioneel)
-        document_type: Document type voor fallback strategie
+        strategy: Expliciete strategie (optioneel, anders auto-detect)
+        document_type: Document type voor hint bij auto-detection
         overlap: Override voor overlap (0 = gebruik default)
     """
-    # Bepaal strategie
-    if not strategy:
-        # Map document_type naar default strategie
-        type_to_strategy = {
-            "annual_report_pdf": "page_plus_table_aware",
-            "jaarrekening": "page_plus_table_aware",
-            "offer_doc": "semantic_sections",
-            "offertes": "semantic_sections",
-            "coaching_doc": "conversation_turns",
-            "coaching_chat": "conversation_turns",
-            "chatlog": "conversation_turns",
-            "review_doc": "default",
-            "google_reviews": "default",
-        }
-        strategy = type_to_strategy.get(document_type, "default")
+    # Gebruik de nieuwe modular chunking module
+    metadata = {"document_type": document_type} if document_type else None
+    config = {"overlap": overlap} if overlap > 0 else None
     
-    # Haal config
-    config = CHUNK_STRATEGY_CONFIG.get(strategy, CHUNK_STRATEGY_CONFIG["default"])
-    max_chars = config.get("max_chars", 800)
-    default_overlap = config.get("overlap", 0)
-    effective_overlap = overlap if overlap > 0 else default_overlap
-    
-    # Voer strategie uit
-    if strategy == "page_plus_table_aware":
-        return chunk_page_aware(text, max_chars, effective_overlap)
-    elif strategy == "semantic_sections":
-        return chunk_semantic_sections(text, max_chars, effective_overlap)
-    elif strategy == "conversation_turns":
-        return chunk_conversation_turns(text, max_chars, effective_overlap)
-    elif strategy == "table_aware":
-        return chunk_table_aware(text, max_chars, effective_overlap)
-    else:
-        return chunk_default(text, max_chars, effective_overlap)
+    return chunk_text_modular(
+        text=text,
+        strategy=strategy,
+        config=config,
+        metadata=metadata
+    )
 
 
 def chunk_text(text: str, cfg: ChunkingConfig) -> List[str]:
@@ -458,22 +579,33 @@ def ingest_text_into_index(
         metadata: Extra metadata
         enrich_context: Of LLM context moet worden toegevoegd (default True)
     """
+    start_time = time.time()
+    
     if not raw_text.strip():
         return 0
 
+    # Status: Chunking gestart
+    report_chunking(doc_id, strategy=chunk_strategy or "auto")
+    
     # Gebruik de nieuwe strategie-gebaseerde chunking
-    chunks = chunk_text_with_strategy(
+    raw_chunks = chunk_text_with_strategy(
         text=raw_text,
         strategy=chunk_strategy,
         document_type=document_type,
         overlap=chunk_overlap
     )
-    
-    if not chunks:
+
+    if not raw_chunks:
         return 0
+
+    # Dedupe (exact) op basis van raw chunk hash
+    # NB: index bestaat mogelijk nog niet, dus we doen dedupe na get_or_create_index.
     
-    # === NIEUW: LLM-based Contextual Enrichment ===
+    # === LLM-based Contextual Enrichment ===
     if enrich_context and CONTEXT_ENABLED:
+        # Status: Enrichment gestart
+        report_enriching(doc_id, chunks_count=len(raw_chunks), current=0)
+        
         # Bouw document metadata voor context generatie
         doc_metadata = {
             "filename": (metadata or {}).get("filename", doc_id),
@@ -482,23 +614,89 @@ def ingest_text_into_index(
             "main_entities": (metadata or {}).get("main_entities", []),
         }
         
-        print(f"[AI-3] Enriching {len(chunks)} chunks with LLM context...")
-        enriched_chunks = enrich_chunks_batch(chunks, doc_metadata)
+        print(f"[AI-3] Enriching {len(raw_chunks)} chunks with LLM context (8B parallel)...")
+        logger.info(f"[INGEST] Starting enrichment for {doc_id}: {len(raw_chunks)} chunks")
         
-        # Embed de verrijkte chunks
-        emb = embed_texts(enriched_chunks)
+        # === FASE 1: LLM Enrichment (8B parallel over 6 GPU's on GPU 2-7) ===
+        contexts = enrich_chunks_batch(raw_chunks, doc_metadata)
+        # contexts bevat nu de complete embed_text (doc header + context + raw)
+        embed_chunks = contexts
         
-        # Bewaar originele tekst in metadata, verrijkte tekst werd geëmbed
-        original_chunks = chunks
-        chunks = enriched_chunks
+        print(f"[AI-3] Enrichment completed for {doc_id}")
+        logger.info(f"[INGEST] Enrichment completed for {doc_id}")
+        
+        # === SAVE ENRICHED CHUNKS (voor debugging/recovery) ===
+        import json
+        enriched_cache_file = f"data/enriched_{doc_id.replace(':', '_').replace('/', '_')}.json"
+        try:
+            with open(enriched_cache_file, 'w') as f:
+                json.dump({
+                    "doc_id": doc_id,
+                    "raw_chunks": raw_chunks,
+                    "enriched_chunks": embed_chunks,
+                    "metadata": metadata or {},
+                    "timestamp": datetime.now().isoformat()
+                }, f, indent=2)
+            print(f"[AI-3] Saved enriched chunks to {enriched_cache_file}")
+        except Exception as e:
+            logger.warning(f"Failed to save enriched chunks: {e}")
+        
+        # === Light GPU cleanup before embedding ===
+        print(f"[AI-3] Light PyTorch cleanup before embedding...")
+        logger.info(f"[INGEST] GPU cleanup before embedding for {doc_id}")
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
+        # Status: Embedding gestart
+        report_embedding(doc_id, chunks_count=len(raw_chunks), current=0)
+        logger.info(f"[INGEST] Starting embedding for {doc_id}: {len(embed_chunks)} chunks")
+        
+        # === FASE 2: PyTorch Embedding (GPU 0) ===
+        emb = embed_texts(embed_chunks)
+        
+        logger.info(f"[INGEST] Embedding completed for {doc_id}")
     else:
-        emb = embed_texts(chunks)
-        original_chunks = chunks
-    # === EINDE NIEUW ===
+        # Status: Embedding gestart
+        embed_chunks = raw_chunks
+        report_embedding(doc_id, chunks_count=len(raw_chunks), current=0)
+        logger.info(f"[INGEST] Starting embedding (no enrichment) for {doc_id}: {len(raw_chunks)} chunks")
+        
+        emb = embed_texts(embed_chunks)
+        
+        logger.info(f"[INGEST] Embedding completed for {doc_id}")
     
     dim = emb.shape[1]
 
+    # Status: Storing gestart
+    report_storing(doc_id, chunks_count=len(raw_chunks))
+    logger.info(f"[INGEST] Starting storage for {doc_id}: {len(raw_chunks)} chunks, dim={dim}")
+    
     idx = get_or_create_index(project_id, document_type, dim)
+
+    # Apply dedupe now that we have index state
+    deduped_raw_chunks: List[str] = []
+    deduped_embed_chunks: List[str] = []
+    deduped_embs: List[np.ndarray] = []
+
+    for i, raw_ch in enumerate(raw_chunks):
+        h = _chunk_hash(raw_ch)
+        if h in idx.chunk_hashes:
+            continue
+        idx.chunk_hashes.add(h)
+        deduped_raw_chunks.append(raw_ch)
+        deduped_embed_chunks.append(embed_chunks[i])
+        deduped_embs.append(emb[i])
+
+    if not deduped_raw_chunks:
+        # Alles was duplicate
+        report_completed(doc_id, chunks_stored=0, duration_sec=time.time() - start_time)
+        return 0
+
+    # Replace with deduped arrays
+    raw_chunks = deduped_raw_chunks
+    embed_chunks = deduped_embed_chunks
+    emb = np.vstack(deduped_embs).astype("float32")
 
     start_idx = len(idx.chunks)
     idx.index.add(emb)
@@ -510,20 +708,23 @@ def ingest_text_into_index(
         "document_type": document_type,
         "chunk_strategy": chunk_strategy or "auto",
         "context_enriched": enrich_context and CONTEXT_ENABLED,
+        "text_mode": "raw+embed",
     }
 
-    for i, ch in enumerate(chunks):
+    for i, embed_ch in enumerate(embed_chunks):
         chunk_id = f"{doc_id}#c{start_idx + i:04d}"
         chunk_meta = {**base_meta}
-        # Bewaar ook originele tekst als die verschilt
-        if enrich_context and CONTEXT_ENABLED and i < len(original_chunks):
-            chunk_meta["original_text"] = original_chunks[i]
+        raw_ch = raw_chunks[i]
+        chunk_meta["raw_text"] = raw_ch
+        chunk_meta["embed_text"] = embed_ch
+        chunk_meta["chunk_hash"] = _chunk_hash(raw_ch)
         
         idx.chunks.append(
             ChunkHit(
                 doc_id=doc_id,
                 chunk_id=chunk_id,
-                text=ch,  # Verrijkte tekst
+                # Default return: raw (AI-4 kan later kiezen wat te tonen)
+                text=raw_ch,
                 score=0.0,
                 metadata=chunk_meta,
             )
@@ -531,11 +732,28 @@ def ingest_text_into_index(
 
     strategy_used = chunk_strategy or f"auto({document_type})"
     context_status = "with LLM context" if (enrich_context and CONTEXT_ENABLED) else "no context"
+    duration = time.time() - start_time
+    
+    # Status: Completed
+    report_completed(doc_id, chunks_stored=len(raw_chunks), duration_sec=duration)
+    
     print(
         f"[AI-3] Ingest project={project_id} type={document_type} strategy={strategy_used} "
-        f"doc_id={doc_id} chunks={len(chunks)} ({context_status}) (totaal={len(idx.chunks)})"
+        f"doc_id={doc_id} chunks={len(raw_chunks)} ({context_status}) (totaal={len(idx.chunks)}) "
+        f"duration={duration:.1f}s"
     )
-    return len(chunks)
+
+    # Optional: Unload model to free GPU memory for other tasks
+    if AUTO_UNLOAD_EMBEDDER:
+        try:
+            logger.info("[AI-3] AUTO_UNLOAD_EMBEDDER: freeing embedding model")
+            model = None
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception as e:
+            logger.warning(f"[AI-3] AUTO_UNLOAD_EMBEDDER failed: {e}")
+    return len(raw_chunks)
 
 
 # ----------------- Helpers: file parsers -----------------
@@ -545,12 +763,12 @@ def extract_text_from_txt(data: bytes) -> str:
 
 
 def extract_text_from_pdf(data: bytes) -> str:
-    reader = PdfReader(io.BytesIO(data))
-    pages = []
-    for i, page in enumerate(reader.pages):
-        txt = page.extract_text() or ""
-        pages.append(f"[PAGE {i+1}]\n{txt}")
-    return "\n\n".join(pages)
+    """
+    Extract text from PDF with automatic OCR fallback.
+    Uses smart detection: if pages have < 100 chars, OCR is applied.
+    """
+    from pdf_ocr_extractor import extract_text_from_pdf_smart
+    return extract_text_from_pdf_smart(data, force_ocr=False)
 
 
 def extract_text_from_docx(data: bytes) -> str:
@@ -598,6 +816,10 @@ def extract_text_from_file(filename: str, data: bytes) -> str:
 # ----------------- Startup: optionele corpus -----------------
 
 def load_initial_corpus():
+    # In '70B-first' setups willen we géén embedding/enrichment doen tijdens startup.
+    if DISABLE_STARTUP_CORPUS_LOAD:
+        print("[AI-3] Startup corpus load disabled (DISABLE_STARTUP_CORPUS_LOAD=true)")
+        return
     if not os.path.isdir(CORPUS_DIR):
         return
     txt_files = sorted(glob.glob(os.path.join(CORPUS_DIR, "*.txt")))
@@ -694,7 +916,10 @@ def rerank_chunks_via_http(query: str, chunks: List[ChunkHit], top_k: int) -> Li
 @app.on_event("startup")
 def on_startup():
     print("[AI-3] Startup – model initialiseren...")
-    init_model()
+    if DISABLE_STARTUP_EMBED_WARMUP:
+        print("[AI-3] Startup warmup disabled (DISABLE_STARTUP_EMBED_WARMUP=true)")
+    else:
+        init_model()
     load_initial_corpus()
     # Check reranker service
     if RERANK_ENABLED:
@@ -714,6 +939,154 @@ def health():
     return HealthResponse(status="ok", detail="ai-3 datafactory up")
 
 
+# ============================================
+# Chunking Strategy Management Endpoints
+# ============================================
+
+@app.get("/strategies/list")
+def list_chunking_strategies():
+    """
+    Lijst alle beschikbare chunking strategieën.
+    
+    Returns:
+        List van strategieën met naam, beschrijving en default config
+    """
+    return {
+        "strategies": list_strategies(),
+        "count": len(list_strategies())
+    }
+
+
+@app.post("/strategies/detect")
+def detect_chunking_strategy(text: str, metadata: Optional[Dict[str, Any]] = None):
+    """
+    Detecteer beste chunking strategie voor gegeven tekst.
+    
+    Args:
+        text: Sample tekst (eerste 2000 chars is voldoende)
+        metadata: Extra metadata (filename, mime_type, etc.)
+        
+    Returns:
+        Suggested strategie met confidence score
+    """
+    from chunking_strategies import get_registry
+    
+    registry = get_registry()
+    suggested = registry.auto_detect(text, metadata)
+    
+    # Get confidence scores voor alle strategieën
+    scores = {}
+    for name, strategy in registry.strategies.items():
+        try:
+            score = strategy.detect_applicability(text[:2000], metadata)
+            scores[name] = round(score, 2)
+        except Exception:
+            scores[name] = 0.0
+    
+    return {
+        "suggested_strategy": suggested,
+        "confidence": scores.get(suggested, 0.0),
+        "all_scores": scores
+    }
+
+
+@app.post("/strategies/test")
+def test_chunking_strategy(
+    text: str,
+    strategy: str,
+    config: Optional[Dict[str, Any]] = None
+):
+    """
+    Test een chunking strategie met sample data.
+    
+    Args:
+        text: Tekst om te chunken
+        strategy: Strategie naam
+        config: Custom config (optional)
+        
+    Returns:
+        Chunks met statistics
+    """
+    chunks = chunk_text_modular(text, strategy=strategy, config=config)
+    
+    if not chunks:
+        return {
+            "chunks_count": 0,
+            "sample_chunks": [],
+            "statistics": {}
+        }
+    
+    lengths = [len(c) for c in chunks]
+    
+    return {
+        "chunks_count": len(chunks),
+        "sample_chunks": chunks[:3],  # First 3 chunks as example
+        "statistics": {
+            "avg_length": round(sum(lengths) / len(lengths), 1),
+            "min_length": min(lengths),
+            "max_length": max(lengths),
+            "total_chars": sum(lengths),
+            "strategy_used": strategy,
+            "config_used": config or "default"
+        }
+    }
+
+
+@app.get("/gpu/status")
+def gpu_status():
+    """
+    Haal GPU status op voor monitoring en debugging.
+    
+    Returns:
+        GPU info per kaart en huidige taak status
+    """
+    return gpu_manager.get_status()
+
+
+@app.post("/gpu/cleanup")
+def gpu_cleanup():
+    """
+    Forceer GPU geheugen cleanup.
+    Nuttig na fouten of wanneer geheugen gefragmenteerd is.
+    """
+    gpu_manager.full_cleanup()
+    return {"status": "ok", "message": "GPU cleanup completed"}
+
+
+@app.get("/embedder/status")
+def embedder_status():
+    """
+    Simple embedder status voor monitoring.
+    
+    Returns:
+        Model status (loaded/not loaded)
+    """
+    global model
+    return {
+        "model_loaded": model is not None,
+        "model_name": EMBED_MODEL_NAME,
+        "device": str(next(model.parameters()).device) if model else "not_loaded",
+        "dedicated_gpu": "GPU 0 (via CUDA_VISIBLE_DEVICES)",
+    }
+
+
+@app.post("/embedder/unload")
+def embedder_unload():
+    """
+    Unload embedding model om GPU geheugen vrij te maken.
+    """
+    global model
+    model = None
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
+    return {
+        "status": "ok", 
+        "message": "Embedding model unloaded, GPU memory freed"
+    }
+
+
 @app.post("/v1/rag/search", response_model=SearchResponse)
 def rag_search(req: SearchRequest):
     """
@@ -728,7 +1101,10 @@ def rag_search(req: SearchRequest):
     if key not in indices:
         raise HTTPException(
             status_code=404,
-            detail=f"Index voor project_id='{req.project_id}' document_type='{req.document_type}' niet gevonden",
+            detail=(
+                f"Index voor project_id='{req.project_id}' "
+                f"document_type='{req.document_type}' niet gevonden"
+            ),
         )
 
     idx = indices[key]
@@ -740,14 +1116,12 @@ def rag_search(req: SearchRequest):
 
     # Stap 1: FAISS search - haal meer candidates op als reranking aan staat
     q_emb = embed_texts([req.question])
-    
+
     if RERANK_ENABLED:
-        # Haal meer candidates op voor reranking
         candidates_k = min(RERANK_CANDIDATES, len(idx.chunks))
     else:
-        # Geen reranking, haal direct top_k
         candidates_k = min(max(req.top_k, 1), len(idx.chunks))
-    
+
     scores, idxs = idx.index.search(q_emb, candidates_k)
 
     # Bouw candidate hits
@@ -802,8 +1176,8 @@ def ingest_text_endpoint(req: IngestTextRequest):
         document_type=document_type,
         doc_id=req.doc_id,
         raw_text=req.text,
-        chunk_strategy=req.chunk_strategy,  # ← NIEUW
-        chunk_overlap=req.chunk_overlap,    # ← NIEUW
+        chunk_strategy=req.chunk_strategy,
+        chunk_overlap=req.chunk_overlap,
         metadata=req.metadata,
     )
     return IngestResponse(
@@ -835,6 +1209,8 @@ async def ingest_file_endpoint(
     - "conversation_turns": Chatlogs
     - "table_aware": Tabel-preservatie
     """
+    effective_doc_id = doc_id or file.filename
+
     data = await file.read()
     text = extract_text_from_file(file.filename, data)
 
@@ -849,15 +1225,14 @@ async def ingest_file_endpoint(
         content_type=file.content_type,
         metadata=meta,
     )
-    effective_doc_id = doc_id or file.filename
 
     n = ingest_text_into_index(
         project_id=project_id,
         document_type=effective_type,
         doc_id=effective_doc_id,
         raw_text=text,
-        chunk_strategy=chunk_strategy,  # ← NIEUW
-        chunk_overlap=chunk_overlap,    # ← NIEUW
+        chunk_strategy=chunk_strategy,
+        chunk_overlap=chunk_overlap,
         metadata=meta,
     )
     return IngestResponse(
@@ -866,3 +1241,142 @@ async def ingest_file_endpoint(
         doc_id=effective_doc_id,
         chunks_added=n,
     )
+
+
+# ============================================
+# Simplified Endpoints for AI-4 Orchestrator
+# ============================================
+
+@app.post("/ingest", response_model=IngestResponse)
+def simple_ingest(req: SimpleIngestRequest):
+    """
+    Simplified ingest endpoint voor AI-4 orchestrator.
+    
+    Maps AI-4 payload naar internal /v1/rag/ingest/text format:
+    - Combineert tenant_id:project_id als internal project_id
+    - Gebruikt filename als doc_id
+    - Slaat tenant_id en user_id op in metadata
+    
+    Request (van AI-4):
+    {
+        "tenant_id": "acme",
+        "project_id": "project_001",
+        "user_id": "user@example.com",
+        "filename": "document.pdf",
+        "mime_type": "application/pdf",
+        "text": "Document content...",
+        "document_type": "generic",
+        "metadata": {"custom": "data"},
+        "chunk_strategy": "default",
+        "chunk_overlap": 0
+    }
+    
+    Response:
+    {
+        "project_id": "acme:project_001",
+        "document_type": "generic",
+        "doc_id": "document.pdf",
+        "chunks_added": 5
+    }
+    """
+    # Map tenant_id:project_id combinatie
+    internal_project_id = f"{req.tenant_id}:{req.project_id}"
+    
+    # Gebruik filename als doc_id
+    doc_id = req.filename
+    
+    # Merge metadata met tenant/user info
+    metadata = req.metadata or {}
+    metadata.update({
+        "tenant_id": req.tenant_id,
+        "project_id": req.project_id,  # Original project_id
+        "user_id": req.user_id,
+        "filename": req.filename,
+        "mime_type": req.mime_type,
+        "source": "ai4_orchestrator",
+    })
+    
+    # Auto-detect document_type als niet opgegeven
+    document_type = req.document_type or classify_document_type(
+        req.text,
+        filename=req.filename,
+        content_type=req.mime_type,
+        metadata=metadata,
+    )
+    
+    # Ingest via internal function
+    n = ingest_text_into_index(
+        project_id=internal_project_id,
+        document_type=document_type,
+        doc_id=doc_id,
+        raw_text=req.text,
+        chunk_strategy=req.chunk_strategy,
+        chunk_overlap=req.chunk_overlap,
+        metadata=metadata,
+    )
+    
+    return IngestResponse(
+        project_id=internal_project_id,
+        document_type=document_type,
+        doc_id=doc_id,
+        chunks_added=n,
+    )
+
+
+@app.post("/search", response_model=SearchResponse)
+def simple_search(req: SimpleSearchRequest):
+    """
+    Simplified search endpoint voor AI-4 orchestrator.
+    
+    Maps AI-4 payload naar internal /v1/rag/search format:
+    - Combineert tenant_id:project_id als internal project_id
+    - Accepteert zowel 'query' als 'question' (aliases)
+    
+    Request (van AI-4):
+    {
+        "tenant_id": "acme",
+        "project_id": "project_001",
+        "user_id": "user@example.com",
+        "query": "What is the document about?",  // of "question"
+        "document_type": "generic",
+        "top_k": 5
+    }
+    
+    Response:
+    {
+        "chunks": [
+            {
+                "doc_id": "document.pdf",
+                "chunk_id": "document.pdf#c0001",
+                "text": "Chunk text...",
+                "score": 0.95,
+                "metadata": {
+                    "tenant_id": "acme",
+                    "project_id": "project_001",
+                    ...
+                }
+            }
+        ]
+    }
+    """
+    # Map tenant_id:project_id combinatie
+    internal_project_id = f"{req.tenant_id}:{req.project_id}"
+    
+    # Accept both 'query' and 'question' (aliases)
+    question = req.query or req.question
+    if not question:
+        raise HTTPException(
+            status_code=400,
+            detail="Either 'query' or 'question' is required"
+        )
+    
+    # Build internal search request
+    internal_req = SearchRequest(
+        project_id=internal_project_id,
+        document_type=req.document_type,
+        question=question,
+        top_k=req.top_k,
+    )
+    
+    # Call internal search
+    return rag_search(internal_req)
