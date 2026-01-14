@@ -1,0 +1,18 @@
+{
+  "doc_id": "test_doc.txt",
+  "raw_chunks": [
+    "Dit is een test document voor AI-4 integratie."
+  ],
+  "enriched_chunks": [
+    "[Document: test_doc.txt]\n[Type: generic]\n[Context: Deze passage behandelt het onderwerp van een testdocument voor de integratie van AI-4. Het gaat om een eenvoudige tekst die wordt gebruikt als testgegeven voor een AI-integratieproces.]\n\nDit is een test document voor AI-4 integratie."
+  ],
+  "metadata": {
+    "tenant_id": "test_tenant",
+    "project_id": "test_proj",
+    "user_id": "user@test.com",
+    "filename": "test_doc.txt",
+    "mime_type": "text/plain",
+    "source": "ai4_orchestrator"
+  },
+  "timestamp": "2026-01-08T11:02:48.829774"
+}

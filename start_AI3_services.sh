@@ -1,278 +1,325 @@
-#!/usr/bin/env bash
+#!/bin/bash
 #
-# AI-3 Service Starter - Robuuste versie
+# AI-3 Services Optimized Startup
+# ================================
 # 
-# Fixes voor genoteerde blunders:
-# - Blunder 1: Expliciet 70B model laden
-# - Blunder 2: Model status checken met ollama ps
-# - Blunder 3: OLLAMA_MODELS path correct zetten
+# GPU Allocation Strategy:
+#   GPU 0: DataFactory Embedding (BGE-M3) - Always resident
+#   GPU 1: Reranker (BGE-reranker-v2-m3) - Always resident
+#   GPU 2: OCR Service (EasyOCR) - GPU-accelerated text extraction
+#   GPU 3: Doc Analyzer (HuggingFace) - RESERVED for future GPU enhancement
+#   GPU 4-7: 4x Ollama llama3.1:8b for parallel enrichment
 #
-set -euo pipefail
+# Benefits:
+#   - 4x faster enrichment (~35s vs 140s per document)
+#   - Clean GPU pinning (no cleanup needed)
+#   - 2 GPUs reserved for future expansion
+#   - Predictable, stable performance
+#
 
-ROOT_DIR="$HOME/Projects/RAG-ai3-chunk-embed"
-VENV_DIR="$ROOT_DIR/.venv"
-LOG_DIR="$ROOT_DIR/logs"
+set -e
 
-# === CRITICAL: Ollama model locatie ===
-export OLLAMA_MODELS="/usr/share/ollama/.ollama/models"
+PROJECT_DIR="/home/daniel/Projects/RAG-ai3-chunk-embed"
+cd "$PROJECT_DIR"
 
-# Default model voor analyse/enrichment
-DEFAULT_LLM_MODEL="${LLM_MODEL:-llama3.1:70b}"
+# Activate venv
+source .venv/bin/activate
 
-# Kleuren
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
-
-echo_status() { echo -e "${BLUE}[STATUS]${NC} $1"; }
-echo_ok() { echo -e "${GREEN}[OK]${NC} $1"; }
-echo_err() { echo -e "${RED}[ERROR]${NC} $1"; }
-echo_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+# Ollama config
+export OLLAMA_MODELS=/usr/share/ollama/.ollama/models
 
 echo "========================================"
-echo "  AI-3 Service Starter (Robuust)"
+echo "AI-3 Services - Optimized Startup"
 echo "========================================"
-echo "Project: $ROOT_DIR"
-echo "OLLAMA_MODELS: $OLLAMA_MODELS"
-echo "Default LLM: $DEFAULT_LLM_MODEL"
+echo "Project: $PROJECT_DIR"
+echo "GPU Strategy: 0=Embed, 1=Rerank, 2-3=Reserved, 4-7=Enrichment"
 echo ""
 
-# === Validatie ===
-if [ ! -d "$ROOT_DIR" ]; then
-  echo_err "$ROOT_DIR bestaat niet"
-  exit 1
-fi
-
-if [ ! -d "$VENV_DIR" ]; then
-  echo_err "venv niet gevonden op $VENV_DIR"
-  exit 1
-fi
-
-cd "$ROOT_DIR"
-source "$VENV_DIR/bin/activate"
-mkdir -p "$LOG_DIR"
-
-# === Helper functies ===
-
-kill_port() {
-  local PORT="$1"
-  if command -v lsof >/dev/null 2>&1; then
-    local PIDS
-    PIDS=$(lsof -ti:"$PORT" 2>/dev/null || true)
-    if [ -n "$PIDS" ]; then
-      echo_status "Kill processen op poort $PORT: $PIDS"
-      kill $PIDS 2>/dev/null || true
-      sleep 1
-    fi
-  fi
-}
-
-wait_for_service() {
-  local url=$1
-  local name=$2
-  local timeout=${3:-60}
-  local count=0
-  
-  echo_status "Wacht op $name..."
-  while ! curl -s "$url" > /dev/null 2>&1; do
-    sleep 1
-    count=$((count + 1))
-    if [ $count -ge $timeout ]; then
-      echo_err "Timeout wachten op $name ($url)"
-      return 1
-    fi
-  done
-  echo_ok "$name beschikbaar"
-  return 0
-}
-
-check_gpu_status() {
-  echo_status "GPU Status:"
-  nvidia-smi --query-gpu=index,memory.used,memory.free,temperature.gpu \
-    --format=csv,noheader,nounits 2>/dev/null | while IFS=, read -r idx used free temp; do
-    echo "  GPU $idx: ${used}MB used, ${free}MB free, ${temp}°C"
-  done
-}
-
-# === STAP 1: Stop oude processen ===
+# ===========================================
+# STEP 1: Cleanup old processes
+# ===========================================
+echo "=== STEP 1: Cleanup ==="
+pkill -f "uvicorn app:app" || true
+pkill -f "reranker_service" || true
+pkill -f "doc_analyzer_service" || true
+pkill -f "ollama serve" || true
+pkill -f "ollama runner" || true
+sleep 2
+echo "[OK] Old processes cleaned"
 echo ""
-echo "=== STAP 1: Cleanup oude processen ==="
-kill_port 8000
-kill_port 9000
-kill_port 9100
-kill_port 9200
 
-# === STAP 2: Start Ollama met correcte OLLAMA_MODELS ===
-echo ""
-echo "=== STAP 2: Start Ollama ==="
-
-# Check of Ollama al draait
-if pgrep -x "ollama" > /dev/null; then
-  echo_warn "Ollama draait al, checken of OLLAMA_MODELS correct is..."
+# ===========================================
+# STEP 2: Start Ollama main daemon
+# ===========================================
+echo "=== STEP 2: Start Ollama Daemon ==="
+if pgrep -f "ollama serve" > /dev/null; then
+    echo "[OK] Ollama already running"
 else
-  echo_status "Starten Ollama serve met OLLAMA_MODELS=$OLLAMA_MODELS"
-  OLLAMA_MODELS="$OLLAMA_MODELS" ollama serve > "$LOG_DIR/ollama.log" 2>&1 &
-  sleep 3
+    OLLAMA_MODELS=$OLLAMA_MODELS ollama serve > logs/ollama_main.log 2>&1 &
+    sleep 3
+    echo "[OK] Ollama daemon started"
 fi
-
-# Wacht tot Ollama beschikbaar is
-if ! wait_for_service "http://localhost:11434/api/tags" "Ollama" 30; then
-  echo_err "Ollama kon niet starten!"
-  exit 1
-fi
-
-# === STAP 3: Check beschikbare models (FIX Blunder 3) ===
 echo ""
-echo "=== STAP 3: Check Ollama models ==="
-echo_status "Beschikbare models:"
-OLLAMA_MODELS="$OLLAMA_MODELS" ollama list | head -10
 
-# Check of het gewenste model beschikbaar is
-if ! OLLAMA_MODELS="$OLLAMA_MODELS" ollama list | grep -q "$DEFAULT_LLM_MODEL"; then
-  echo_err "Model $DEFAULT_LLM_MODEL niet gevonden!"
-  echo_status "Beschikbare models:"
-  OLLAMA_MODELS="$OLLAMA_MODELS" ollama list
-  echo_warn "Ga door zonder model warmup..."
-else
-  echo_ok "Model $DEFAULT_LLM_MODEL beschikbaar"
-fi
+# ===========================================
+# STEP 3: Start 4x Ollama instances (GPU 4-7)
+# ===========================================
+echo "=== STEP 3: Start 4x Ollama Instances (GPU 4-7) ==="
 
-# === STAP 4: Warmup 70B model (FIX Blunder 1) ===
-echo ""
-echo "=== STAP 4: Warmup LLM model ==="
+# Instance 1 - GPU 4 - Port 11435
+echo "[START] Ollama Instance 1 (GPU 4, port 11435)..."
+CUDA_VISIBLE_DEVICES=4 \
+OLLAMA_HOST=0.0.0.0:11435 \
+OLLAMA_MODELS=$OLLAMA_MODELS \
+ollama serve > logs/ollama_gpu4_11435.log 2>&1 &
+OLLAMA_PID_1=$!
 
-# Check huidige model status (FIX Blunder 2)
-echo_status "Huidige model status (ollama ps):"
-OLLAMA_MODELS="$OLLAMA_MODELS" ollama ps
+# Instance 2 - GPU 5 - Port 11436
+echo "[START] Ollama Instance 2 (GPU 5, port 11436)..."
+CUDA_VISIBLE_DEVICES=5 \
+OLLAMA_HOST=0.0.0.0:11436 \
+OLLAMA_MODELS=$OLLAMA_MODELS \
+ollama serve > logs/ollama_gpu5_11436.log 2>&1 &
+OLLAMA_PID_2=$!
 
-# Check of model al geladen is
-if OLLAMA_MODELS="$OLLAMA_MODELS" ollama ps | grep -q "$DEFAULT_LLM_MODEL"; then
-  echo_ok "Model $DEFAULT_LLM_MODEL is al geladen"
-else
-  echo_status "Laden $DEFAULT_LLM_MODEL (dit kan even duren)..."
-  
-  # Warmup met kleine prompt
-  WARMUP_RESULT=$(curl -s http://localhost:11434/api/generate \
-    -d "{\"model\":\"$DEFAULT_LLM_MODEL\",\"prompt\":\"Hello\",\"stream\":false}" \
-    --max-time 120 2>/dev/null || echo '{"error":"timeout"}')
-  
-  if echo "$WARMUP_RESULT" | grep -q "error"; then
-    echo_warn "Model warmup mislukt: $WARMUP_RESULT"
-    echo_warn "Doorgaan, model wordt geladen bij eerste request"
-  else
-    echo_ok "Model $DEFAULT_LLM_MODEL geladen"
-  fi
-fi
+# Instance 3 - GPU 6 - Port 11437
+echo "[START] Ollama Instance 3 (GPU 6, port 11437)..."
+CUDA_VISIBLE_DEVICES=6 \
+OLLAMA_HOST=0.0.0.0:11437 \
+OLLAMA_MODELS=$OLLAMA_MODELS \
+ollama serve > logs/ollama_gpu6_11437.log 2>&1 &
+OLLAMA_PID_3=$!
 
-# Bevestig model status
-echo_status "Model status na warmup:"
-OLLAMA_MODELS="$OLLAMA_MODELS" ollama ps
+# Instance 4 - GPU 7 - Port 11438
+echo "[START] Ollama Instance 4 (GPU 7, port 11438)..."
+CUDA_VISIBLE_DEVICES=7 \
+OLLAMA_HOST=0.0.0.0:11438 \
+OLLAMA_MODELS=$OLLAMA_MODELS \
+ollama serve > logs/ollama_gpu7_11438.log 2>&1 &
+OLLAMA_PID_4=$!
 
-# === STAP 5: Check GPU status ===
-echo ""
-echo "=== STAP 5: GPU Status na model load ==="
-check_gpu_status
-
-# === STAP 6: Start Python services ===
-echo ""
-echo "=== STAP 6: Start Python services ==="
-
-# Embedding Service (port 8000)
-echo_status "Start embedding_service op poort 8000..."
-OLLAMA_MODELS="$OLLAMA_MODELS" nohup uvicorn embedding_service:app \
-  --host 0.0.0.0 --port 8000 > "$LOG_DIR/embedding_8000.log" 2>&1 &
-EMBED_PID=$!
-echo "  PID: $EMBED_PID"
-
-# DataFactory (port 9000) - LANGE TIMEOUTS voor grote PDF's
-echo_status "Start datafactory app op poort 9000..."
-OLLAMA_MODELS="$OLLAMA_MODELS" nohup uvicorn app:app \
-  --host 0.0.0.0 --port 9000 \
-  --timeout-keep-alive 7200 \
-  --timeout-graceful-shutdown 30 \
-  --limit-concurrency 1000 \
-  --backlog 2048 > "$LOG_DIR/datafactory_9000.log" 2>&1 &
-DATA_PID=$!
-echo "  PID: $DATA_PID"
-
-# Doc Analyzer (port 9100) - LANGE TIMEOUTS voor grote PDF analyse (70B model)
-echo_status "Start doc_analyzer_service op poort 9100..."
-OLLAMA_MODELS="$OLLAMA_MODELS" nohup uvicorn doc_analyzer_service:app \
-  --host 0.0.0.0 --port 9100 \
-  --timeout-keep-alive 7200 \
-  --timeout-graceful-shutdown 30 \
-  --limit-concurrency 1000 \
-  --backlog 2048 > "$LOG_DIR/analyzer_9100.log" 2>&1 &
-ANALYZER_PID=$!
-echo "  PID: $ANALYZER_PID"
-
-# Reranker (port 9200)
-echo_status "Start reranker_service op poort 9200..."
-OLLAMA_MODELS="$OLLAMA_MODELS" nohup uvicorn reranker_service:app \
-  --host 0.0.0.0 --port 9200 > "$LOG_DIR/reranker_9200.log" 2>&1 &
-RERANK_PID=$!
-echo "  PID: $RERANK_PID"
-
-# === STAP 7: Wacht op services en health checks ===
-echo ""
-echo "=== STAP 7: Health checks ==="
+echo "[WAIT] Waiting for Ollama instances to start..."
 sleep 5
 
-ALL_OK=true
-
-if wait_for_service "http://localhost:8000/health" "Embedding Service" 30; then
-  curl -s http://localhost:8000/health | jq -c '.' 2>/dev/null || true
-else
-  ALL_OK=false
-fi
-
-if wait_for_service "http://localhost:9000/health" "DataFactory" 30; then
-  curl -s http://localhost:9000/health | jq -c '.' 2>/dev/null || true
-else
-  ALL_OK=false
-fi
-
-if wait_for_service "http://localhost:9100/health" "Doc Analyzer" 30; then
-  curl -s http://localhost:9100/health | jq -c '.' 2>/dev/null || true
-else
-  ALL_OK=false
-fi
-
-if wait_for_service "http://localhost:9200/health" "Reranker" 30; then
-  curl -s http://localhost:9200/health | jq -c '.' 2>/dev/null || true
-else
-  ALL_OK=false
-fi
-
-# === STAP 8: Samenvatting ===
+# Verify instances are running
+for port in 11435 11436 11437 11438; do
+    if curl -s http://localhost:$port/api/tags > /dev/null 2>&1; then
+        echo "[OK] Ollama instance on port $port is UP"
+    else
+        echo "[WARN] Ollama instance on port $port not responding"
+    fi
+done
 echo ""
+
+# ===========================================
+# STEP 4: Pre-load models on all Ollama instances (async)
+# ===========================================
+echo "=== STEP 4: Pre-load llama3.1:8b on all 4 instances (async) ==="
+for port in 11435 11436 11437 11438; do
+    echo "[LOAD] Triggering model load on port $port (background)..."
+    (curl -s --max-time 120 http://localhost:$port/api/generate -d '{
+        "model": "llama3.1:8b",
+        "prompt": "warmup",
+        "stream": false,
+        "keep_alive": "30m"
+    }' > /dev/null 2>&1 || echo "[WARN] Model load on port $port timed out (will load on first use)" ) &
+done
+
+echo "[INFO] Models loading in background (will be ready on first use)"
+echo "[INFO] Continuing with service startup..."
+echo ""
+
+# ===========================================
+# STEP 5: Start DataFactory (GPU 0)
+# ===========================================
+echo "=== STEP 5: Start DataFactory (GPU 0 - Embedding) ==="
+CUDA_VISIBLE_DEVICES=0 \
+AUTO_UNLOAD_EMBEDDER=false \
+DISABLE_STARTUP_EMBED_WARMUP=false \
+DISABLE_STARTUP_CORPUS_LOAD=true \
+HYBRID_SEARCH_ENABLED=true \
+RERANK_ENABLED=true \
+CONTEXT_ENABLED=true \
+OLLAMA_MULTI_GPU=true \
+OLLAMA_BASE_PORT=11435 \
+OLLAMA_NUM_INSTANCES=4 \
+CONTEXT_MAX_WORKERS=4 \
+uvicorn app:app \
+  --host 0.0.0.0 \
+  --port 9000 \
+  --timeout-keep-alive 7200 \
+  --timeout-graceful-shutdown 30 \
+  --limit-concurrency 1000 \
+  --backlog 2048 \
+  > logs/datafactory_9000.log 2>&1 &
+DATAFACTORY_PID=$!
+echo "[START] DataFactory PID: $DATAFACTORY_PID"
+echo ""
+
+# ===========================================
+# STEP 6: Start Doc Analyzer (CPU) - FastAPI with uvicorn
+# ===========================================
+echo "=== STEP 6: Start Doc Analyzer (CPU) ==="
+uvicorn doc_analyzer_service:app \
+  --host 0.0.0.0 \
+  --port 9100 \
+  --timeout-keep-alive 3600 \
+  > logs/doc_analyzer_9100.log 2>&1 &
+DOC_ANALYZER_PID=$!
+echo "[START] Doc Analyzer PID: $DOC_ANALYZER_PID"
+echo ""
+
+# ===========================================
+# STEP 7: Start Reranker (GPU 1) - FastAPI with uvicorn
+# ===========================================
+echo "=== STEP 7: Start Reranker (GPU 1) ==="
+CUDA_VISIBLE_DEVICES=1 \
+uvicorn reranker_service:app \
+  --host 0.0.0.0 \
+  --port 9200 \
+  --timeout-keep-alive 3600 \
+  > logs/reranker_9200.log 2>&1 &
+RERANKER_PID=$!
+echo "[START] Reranker PID: $RERANKER_PID"
+echo ""
+
+# ===========================================
+# STEP 8: Start OCR Service (GPU 2) - Direct Python script
+# ===========================================
+echo "=== STEP 8: Start OCR Service (GPU 2) ==="
+CUDA_VISIBLE_DEVICES=2 \
+python ocr_service.py --port 9300 \
+  > logs/ocr_9300.log 2>&1 &
+OCR_PID=$!
+echo "[START] OCR Service PID: $OCR_PID"
+echo ""
+
+# ===========================================
+# STEP 9: Health checks with proper error handling
+# ===========================================
+echo "=== STEP 9: Health Checks ==="
+
+HEALTH_CHECK_FAILED=0
+
+# DataFactory - critical service
+echo -n "[CHECK] DataFactory (port 9000)... "
+READY=0
+for i in {1..30}; do
+    if curl -s http://localhost:9000/health > /dev/null 2>&1; then
+        echo "OK"
+        READY=1
+        break
+    fi
+    sleep 1
+done
+if [ $READY -eq 0 ]; then
+    echo "FAILED - check logs/datafactory_9000.log"
+    HEALTH_CHECK_FAILED=1
+fi
+
+# Doc Analyzer - critical for pipeline
+echo -n "[CHECK] Doc Analyzer (port 9100)... "
+READY=0
+for i in {1..15}; do
+    if curl -s http://localhost:9100/health > /dev/null 2>&1; then
+        echo "OK"
+        READY=1
+        break
+    fi
+    sleep 1
+done
+if [ $READY -eq 0 ]; then
+    echo "FAILED - check logs/doc_analyzer_9100.log"
+    HEALTH_CHECK_FAILED=1
+fi
+
+# Reranker - required for hybrid search
+echo -n "[CHECK] Reranker (port 9200)... "
+READY=0
+for i in {1..20}; do
+    if curl -s http://localhost:9200/health > /dev/null 2>&1; then
+        echo "OK"
+        READY=1
+        break
+    fi
+    sleep 1
+done
+if [ $READY -eq 0 ]; then
+    echo "FAILED - check logs/reranker_9200.log"
+    HEALTH_CHECK_FAILED=1
+fi
+
+# OCR Service - required for scanned docs
+echo -n "[CHECK] OCR Service (port 9300)... "
+READY=0
+for i in {1..25}; do
+    if curl -s http://localhost:9300/health > /dev/null 2>&1; then
+        echo "OK"
+        READY=1
+        break
+    fi
+    sleep 1
+done
+if [ $READY -eq 0 ]; then
+    echo "FAILED - check logs/ocr_9300.log"
+    HEALTH_CHECK_FAILED=1
+fi
+
+echo ""
+
+# Check if any health checks failed
+if [ $HEALTH_CHECK_FAILED -eq 1 ]; then
+    echo "========================================" 
+    echo "[ERROR] Some services failed to start!"
+    echo "========================================" 
+    echo ""
+    echo "Check the logs in $PROJECT_DIR/logs/"
+    echo ""
+    exit 1
+fi
+
+# ===========================================
+# STEP 10: GPU Status
+# ===========================================
+echo "=== STEP 10: GPU Status ==="
+nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.free,temperature.gpu \
+  --format=csv,noheader,nounits | \
+  awk -F', ' '{printf "  GPU %s: %3s%% util, %5s MB used, %5s MB free, %2s°C\n", $1, $3, $4, $5, $6}'
+echo ""
+
+# ===========================================
+# DONE
+# ===========================================
 echo "========================================"
-if $ALL_OK; then
-  echo_ok "Alle services gestart!"
-else
-  echo_warn "Sommige services konden niet starten"
-fi
+echo "[OK] All Services Started!"
 echo "========================================"
 echo ""
-echo "Lokale endpoints:"
-echo "  http://localhost:8000  (Embedding Service)"
-echo "  http://localhost:9000  (DataFactory)"
-echo "  http://localhost:9100  (Doc Analyzer)"
-echo "  http://localhost:9200  (Reranker)"
-echo "  http://localhost:11434 (Ollama)"
+echo "Endpoints:"
+echo "  http://localhost:9000  (DataFactory - GPU 0)"
+echo "  http://localhost:9100  (Doc Analyzer - CPU)"
+echo "  http://localhost:9200  (Reranker - GPU 1)"
+echo "  http://localhost:9300  (OCR Service - GPU 2)"
+echo "  http://localhost:11435 (Ollama GPU 4)"
+echo "  http://localhost:11436 (Ollama GPU 5)"
+echo "  http://localhost:11437 (Ollama GPU 6)"
+echo "  http://localhost:11438 (Ollama GPU 7)"
 echo ""
-echo "Externe toegang (AI-4 via LAN):"
-echo "  http://10.0.1.44:8000  (Embedding)"
+echo "External access (from AI-4):"
 echo "  http://10.0.1.44:9000  (DataFactory)"
-echo "  http://10.0.1.44:9100  (Analyzer)"
+echo "  http://10.0.1.44:9100  (Doc Analyzer)"
 echo "  http://10.0.1.44:9200  (Reranker)"
-echo "  http://10.0.1.44:11434 (Ollama)"
+echo "  http://10.0.1.44:9300  (OCR Service)"
 echo ""
-echo "Logs: $LOG_DIR"
-echo "Model status: OLLAMA_MODELS=$OLLAMA_MODELS ollama ps"
+echo "GPU Allocation:"
+echo "  GPU 0: DataFactory Embedding (always resident)"
+echo "  GPU 1: Reranker (always resident)"
+echo "  GPU 2: OCR Service (EasyOCR - scanned document extraction)"
+echo "  GPU 3: RESERVED (for future Doc Analyzer GPU enhancement)"
+echo "  GPU 4-7: 4x Ollama for parallel enrichment"
 echo ""
-
-# Finale GPU status
-check_gpu_status
+echo "Expected Performance:"
+echo "  Enrichment: ~35 sec/document (4x faster than before!)"
+echo "  Throughput: ~1.7 documents/minute"
+echo ""
+echo "Logs: $PROJECT_DIR/logs/"
+echo "========================================"

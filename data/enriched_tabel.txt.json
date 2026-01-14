@@ -1,0 +1,18 @@
+{
+  "doc_id": "tabel.txt",
+  "raw_chunks": [
+    "JAAR;TOTAAL\n2022;100\n2023;150"
+  ],
+  "enriched_chunks": [
+    "[Document: tabel.txt]\n[Type: generic]\n[Context: De passage behandelt een overzicht van totale waarden voor het jaar 2022 en 2023. De entiteiten die hierin worden genoemd zijn de jaren 2022 en 2023, met respectievelijk een totaalwaarde van 100 en 150.]\n\nJAAR;TOTAAL\n2022;100\n2023;150"
+  ],
+  "metadata": {
+    "tenant_id": "tenant-demo",
+    "project_id": "project-demo",
+    "user_id": "user-admin",
+    "filename": "tabel.txt",
+    "mime_type": "text/plain",
+    "source": "ai4_orchestrator"
+  },
+  "timestamp": "2026-01-08T11:48:59.554150"
+}

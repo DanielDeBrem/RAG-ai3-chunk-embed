@@ -23,15 +23,15 @@ logger = logging.getLogger(__name__)
 # Configuratie
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 # Multi-GPU Ollama: gebruik meerdere instances op verschillende poorten
-OLLAMA_MULTI_GPU = os.getenv("OLLAMA_MULTI_GPU", "false").lower() == "true"
-OLLAMA_BASE_PORT = int(os.getenv("OLLAMA_BASE_PORT", "11434"))
-OLLAMA_NUM_INSTANCES = int(os.getenv("OLLAMA_NUM_INSTANCES", "6"))
-# Gebruik 8B voor snelle parallel context generatie (6x sneller met 6 GPU's!)
+OLLAMA_MULTI_GPU = os.getenv("OLLAMA_MULTI_GPU", "true").lower() == "true"
+OLLAMA_BASE_PORT = int(os.getenv("OLLAMA_BASE_PORT", "11435"))
+OLLAMA_NUM_INSTANCES = int(os.getenv("OLLAMA_NUM_INSTANCES", "4"))
+# Gebruik 8B voor snelle parallel context generatie (4x sneller met 4 GPU's!)
 CONTEXT_MODEL = os.getenv("CONTEXT_MODEL", "llama3.1:8b")
 CONTEXT_TIMEOUT = float(os.getenv("CONTEXT_TIMEOUT", "60"))
 CONTEXT_ENABLED = os.getenv("CONTEXT_ENABLED", "true").lower() == "true"
-# 6 workers = 6 GPU's parallel, laat 2 vrij voor andere taken
-CONTEXT_MAX_WORKERS = int(os.getenv("CONTEXT_MAX_WORKERS", "6"))
+# 4 workers = 4 GPU's parallel (GPU 4-7), laat GPU 2-3 vrij voor toekomstige services
+CONTEXT_MAX_WORKERS = int(os.getenv("CONTEXT_MAX_WORKERS", "4"))
 
 
 def get_ollama_url_for_worker(worker_id: int) -> str:

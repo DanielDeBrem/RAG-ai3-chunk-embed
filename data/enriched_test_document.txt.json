@@ -1,0 +1,18 @@
+{
+  "doc_id": "test_document.txt",
+  "raw_chunks": [
+    "Dit is een test document over RAG systemen en vector embeddings. Het document bevat informatie over hoe AI-4 en AI-3 samenwerken voor document processing."
+  ],
+  "enriched_chunks": [
+    "[Document: test_document.txt]\n[Type: generic]\n[Context: De passage behandelt het onderwerp van RAG (Reactive Attention-based Generator) systemen en vector embeddings, met name hun toepassing in document processing. De relevante entiteiten zijn AI-4 en AI-3, die samenwerken voor document processing.]\n\nDit is een test document over RAG systemen en vector embeddings. Het document bevat informatie over hoe AI-4 en AI-3 samenwerken voor document processing."
+  ],
+  "metadata": {
+    "tenant_id": "b387cc10872e43c2805a98b61cb8d016",
+    "project_id": "d9864f1eb64f490e86e047de06cab731",
+    "user_id": null,
+    "filename": "test_document.txt",
+    "mime_type": null,
+    "source": "ai4_orchestrator"
+  },
+  "timestamp": "2026-01-12T11:40:26.998067"
+}

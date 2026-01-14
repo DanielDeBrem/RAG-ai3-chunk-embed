@@ -1,0 +1,42 @@
+{
+  "doc_id": "menu_22.txt",
+  "raw_chunks": [
+    "[MENU ITEM]\n\nGerecht: TARTUFO IL CLASSICO\nCategorie: Overig\nPrijs: 9.50 EUR",
+    "[MENU ITEM]\n\nGerecht: KINDER IJS\nCategorie: Overig\nPrijs: 3.50 EUR",
+    "[MENU ITEM]\n\nGerecht: TIRAMISU\nCategorie: Overig\nPrijs: 9.50 EUR",
+    "[MENU ITEM]\n\nGerecht: FRUIT COUPE\nCategorie: Overig\nPrijs: 8.75 EUR",
+    "[MENU ITEM]\n\nGerecht: GRAN LIMONE RANIERI\nCategorie: Overig\nPrijs: 9.50 EUR",
+    "[MENU ITEM]\n\nGerecht: AMIGO SPECIAL 3 SOORTEN IJS\nCategorie: Overig\nPrijs: 9.25 EUR",
+    "[MENU ITEM]\n\nGerecht: GRAN ARANCIA RANIERI\nCategorie: Overig\nPrijs: 9.50 EUR",
+    "[MENU ITEM]\n\nGerecht: KOKOSNOOT GEVULD MET IJS\nCategorie: Overig\nPrijs: 9.50 EUR",
+    "[MENU ITEM]\n\nGerecht: SORBET\nCategorie: Overig\nPrijs: 8.75 EUR",
+    "[MENU ITEM]\n\nGerecht: DUNNE PANNEKOEK MET IJS\nCategorie: Overig\nPrijs: 8.75 EUR",
+    "[MENU ITEM]\n\nGerecht: DAME BLANCHE\nCategorie: Overig\nPrijs: 7.50 EUR",
+    "[MENU ITEM]\n\nGerecht: VERSE FRUIT COCKTAIL MET SLAGROOM\nCategorie: Overig\nPrijs: 7.50 EUR"
+  ],
+  "enriched_chunks": [
+    "[Document: menu_22.txt]\n[Type: menu]\n[Context: De passage behandelt een menu-item, specifiek een gerecht genaamd \"Tartufo il Classico\", met daarnaast informatie over de categorie en prijs ervan. De prijs bedraagt 9,50 EUR.]\n\n[MENU ITEM]\n\nGerecht: TARTUFO IL CLASSICO\nCategorie: Overig\nPrijs: 9.50 EUR",
+    "[Document: menu_22.txt]\n[Type: menu]\n[Context: De passage behandelt een menu-item met de naam \"KINDER IJS\" en geeft informatie over de categorie en prijs ervan, die \u20ac3,50 is. De entiteit \"EUR\" verwijst naar de Europese munt.]\n\n[MENU ITEM]\n\nGerecht: KINDER IJS\nCategorie: Overig\nPrijs: 3.50 EUR",
+    "[Document: menu_22.txt]\n[Type: menu]\n[Context: De passage behandelt een menu-item, specifiek een gerecht genaamd \"Tiramisu\", met daarnaast informatie over de categorie en prijs ervan. De prijs bedraagt 9,50 EUR.]\n\n[MENU ITEM]\n\nGerecht: TIRAMISU\nCategorie: Overig\nPrijs: 9.50 EUR",
+    "[Document: menu_22.txt]\n[Type: menu]\n[Context: De passage behandelt een menu-item, specifiek een gerecht genaamd \"FRUIT COUPE\", met een prijs van 8,75 EUR en valt onder de categorie \"Overig\".]\n\n[MENU ITEM]\n\nGerecht: FRUIT COUPE\nCategorie: Overig\nPrijs: 8.75 EUR",
+    "[Document: menu_22.txt]\n[Type: menu]\n[Context: Deze passage behandelt een gerecht dat wordt aangeboden in een restaurant of eetgelegenheid, met name \"GRAN LIMONE RANIERI\". De prijs hiervan bedraagt 9,50 EUR.]\n\n[MENU ITEM]\n\nGerecht: GRAN LIMONE RANIERI\nCategorie: Overig\nPrijs: 9.50 EUR",
+    "[Document: menu_22.txt]\n[Type: menu]\n[Context: De passage behandelt een menu-item met de naam \"AMIGO SPECIAL 3 SOORTEN IJS\" en beschrijft de categorie en prijs ervan, die \u20ac9,25 bedraagt. De tekst is waarschijnlijk afkomstig uit een restaurantmenu of online bestellingssysteem.]\n\n[MENU ITEM]\n\nGerecht: AMIGO SPECIAL 3 SOORTEN IJS\nCategorie: Overig\nPrijs: 9.25 EUR",
+    "[Document: menu_22.txt]\n[Type: menu]\n[Context: De passage behandelt een menu-item met de naam \"GRAN ARANCIA RANIERI\" en geeft informatie over de categorie en prijs ervan, die \u20ac 9,50 is. De entiteit \"EUR\" verwijst naar de Europese munt.]\n\n[MENU ITEM]\n\nGerecht: GRAN ARANCIA RANIERI\nCategorie: Overig\nPrijs: 9.50 EUR",
+    "[Document: menu_22.txt]\n[Type: menu]\n[Context: De passage behandelt een menu-item met de naam \"Kokosnoot gevuld met ijs\" en geeft informatie over de categorie en prijs ervan, die \u20ac 9,50 is. De tekst maakt deel uit van een menu.]\n\n[MENU ITEM]\n\nGerecht: KOKOSNOOT GEVULD MET IJS\nCategorie: Overig\nPrijs: 9.50 EUR",
+    "[Document: menu_22.txt]\n[Type: menu]\n[Context: De passage behandelt een menu-item, specifiek een gerecht genaamd Sorbet, met een prijs van 8,75 EUR en valt onder de categorie \"Overig\".]\n\n[MENU ITEM]\n\nGerecht: SORBET\nCategorie: Overig\nPrijs: 8.75 EUR",
+    "[Document: menu_22.txt]\n[Type: menu]\n[Context: De passage behandelt een menu-item, specifiek een gerecht genaamd \"Dunne pannenkoek met ijs\", dat onder de categorie \"Overig\" valt. De prijs van dit gerecht bedraagt 8,75 EUR.]\n\n[MENU ITEM]\n\nGerecht: DUNNE PANNEKOEK MET IJS\nCategorie: Overig\nPrijs: 8.75 EUR",
+    "[Document: menu_22.txt]\n[Type: menu]\n[Context: De passage behandelt een menu-item met de naam \"Dame Blanche\" en beschrijft zijn categorie en prijs. De prijs bedraagt 7,50 EUR.]\n\n[MENU ITEM]\n\nGerecht: DAME BLANCHE\nCategorie: Overig\nPrijs: 7.50 EUR",
+    "[Document: menu_22.txt]\n[Type: menu]\n[Context: De passage behandelt een menu-item met daarin informatie over een gerecht, categorie en prijs. De entiteit \"VERSE FRUIT COCKTAIL MET SLAGROOM\" is een voorbeeld van een gerecht dat wordt aangeboden.]\n\n[MENU ITEM]\n\nGerecht: VERSE FRUIT COCKTAIL MET SLAGROOM\nCategorie: Overig\nPrijs: 7.50 EUR"
+  ],
+  "metadata": {
+    "item_count": 12,
+    "restaurant_name": "Argentijns - Mexicaans Restaurant Amigo",
+    "tenant_id": "revsummer",
+    "project_id": "22",
+    "user_id": null,
+    "filename": "menu_22.txt",
+    "mime_type": null,
+    "source": "ai4_orchestrator"
+  },
+  "timestamp": "2026-01-14T12:13:35.658485"
+}

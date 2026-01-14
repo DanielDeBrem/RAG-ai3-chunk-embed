@@ -3,6 +3,7 @@ import io
 import glob
 import logging
 import time
+import re
 from typing import List, Dict, Any, Optional, Set
 from datetime import datetime
 
@@ -91,14 +92,28 @@ def classify_document_type(
     t = text[:400].lower()
     meta = metadata or {}
 
+    # Check filename hints eerst (meest betrouwbaar)
+    if "review" in fn or "google" in fn:
+        return "google_reviews"
+    if "menu" in fn:
+        return "menu"
+    
+    # Content-based detection
     if "jaarrekening" in fn or "jaarrekening" in t:
         return "jaarrekening"
     if "offerte" in fn or "aanbieding" in t:
         return "offertes"
-    if "review" in fn or "google" in fn:
-        return "google_reviews"
     if "coach" in t or "sessie" in t:
         return "coaching_chat"
+    
+    # Menu detection via content (fallback als filename geen hint geeft)
+    # Check for prijzen + gerechtnamen
+    price_pattern_count = len(re.findall(r'[€$£]\s*\d+[.,]\d{2}', t))
+    if price_pattern_count >= 2:
+        # Mogelijk menu
+        menu_keywords = ['gerecht', 'main', 'voorgerecht', 'dessert', 'pasta', 'salade']
+        if any(kw in t for kw in menu_keywords):
+            return "menu"
 
     return DEFAULT_DOCUMENT_TYPE
 

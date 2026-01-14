@@ -1,0 +1,20 @@
+{
+  "doc_id": "menu_test_999.txt",
+  "raw_chunks": [
+    "=== Voorgerechten ===\n\nTomatensoep\nVerse tomatensoep met basilicum\n\u20ac 6.50\n\nCarpaccio\nRunderc arpaccio met parmezaan en rucola\n\u20ac 9.50\n\n=== Hoofdgerechten ===\n\nBiefstuk\n200g malse biefstuk met friet en saus\n\u20ac 22.50\n\nZalm\nGegrilde zalm met groenten en aardappels\n\u20ac 19.50"
+  ],
+  "enriched_chunks": [
+    "[Document: menu_test_999.txt]\n[Type: generic]\n[Context: De passage behandelt een menu van een restaurant, waarin verschillende voorgerechten en hoofdgerechten worden beschreven met hun prijzen. De entiteiten die hierbij worden genoemd zijn voedselproducten zoals tomatensoep, carpaccio, biefstuk en zalm.]\n\n=== Voorgerechten ===\n\nTomatensoep\nVerse tomatensoep met basilicum\n\u20ac 6.50\n\nCarpaccio\nRunderc arpaccio met parmezaan en rucola\n\u20ac 9.50\n\n=== Hoofdgerechten ===\n\nBiefstuk\n200g malse biefstuk met friet en saus\n\u20ac 22.50\n\nZalm\nGegrilde zalm met groenten en aardappels\n\u20ac 19.50"
+  ],
+  "metadata": {
+    "item_count": 6,
+    "restaurant_name": "Test Restaurant",
+    "tenant_id": "revsummer",
+    "project_id": "test_999",
+    "user_id": null,
+    "filename": "menu_test_999.txt",
+    "mime_type": null,
+    "source": "ai4_orchestrator"
+  },
+  "timestamp": "2026-01-14T09:09:23.664823"
+}

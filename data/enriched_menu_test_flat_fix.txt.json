@@ -1,0 +1,20 @@
+{
+  "doc_id": "menu_test_flat_fix.txt",
+  "raw_chunks": [
+    "Bruschetta\nGeroosterd brood\n\u20ac 7.50\n\nCarpaccio\nDun gesneden rundvlees\n\u20ac 9.50"
+  ],
+  "enriched_chunks": [
+    "[Document: menu_test_flat_fix.txt]\n[Type: menu]\n[Context: De passage behandelt een menu met twee gerechten, Bruschetta en Carpaccio, inclusief hun respectieve prijzen. De entiteiten die worden genoemd zijn Bruschetta (\u20ac 7.50) en Carpaccio (\u20ac 9.50).]\n\nBruschetta\nGeroosterd brood\n\u20ac 7.50\n\nCarpaccio\nDun gesneden rundvlees\n\u20ac 9.50"
+  ],
+  "metadata": {
+    "item_count": 2,
+    "restaurant_name": "Test Restaurant",
+    "tenant_id": "revsummer",
+    "project_id": "test_flat_fix",
+    "user_id": null,
+    "filename": "menu_test_flat_fix.txt",
+    "mime_type": null,
+    "source": "ai4_orchestrator"
+  },
+  "timestamp": "2026-01-14T10:56:39.360948"
+}

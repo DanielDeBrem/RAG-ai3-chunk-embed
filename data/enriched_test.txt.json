@@ -1,0 +1,18 @@
+{
+  "doc_id": "test.txt",
+  "raw_chunks": [
+    "This is a quick test to verify the DataFactory works."
+  ],
+  "enriched_chunks": [
+    "[Document: test.txt]\n[Type: generic]\n[Context: Deze passage behandelt een test om te controleren of de DataFactory correct werkt. De passage geeft aan dat het een snelle test is, maar er zijn geen specifieke details over de inhoud of doelstelling van deze test vermeld.]\n\nThis is a quick test to verify the DataFactory works."
+  ],
+  "metadata": {
+    "tenant_id": "test",
+    "project_id": "quick_test",
+    "user_id": null,
+    "filename": "test.txt",
+    "mime_type": null,
+    "source": "ai4_orchestrator"
+  },
+  "timestamp": "2026-01-12T22:06:47.146651"
+}

@@ -1,0 +1,29 @@
+{
+  "doc_id": "reviews_test_restaurant_123.txt",
+  "raw_chunks": [
+    "[REVIEW]\n\nReviewtekst:\n\"Review door Jan de Vries:\"",
+    "[REVIEW]\n\nReviewtekst:\n\"Geweldig restaurant met uitstekende service en heerlijk eten. De biefstuk was perfect gebakken en het personeel was zeer vriendelijk. Absoluut een aanrader!\n\nReview door Marie Jansen:\"",
+    "[REVIEW]\n\nReviewtekst:\n\"Eten was prima maar de wachttijd was te lang. We moesten 45 minuten wachten op ons hoofdgerecht. De kwaliteit van het eten was goed, maar de service kan beter.\n\nReview door Piet Bakker:\"",
+    "[REVIEW]\n\nReviewtekst:\n\"Goede sfeer en lekkere gerechten. De prijzen zijn redelijk en de porties zijn ruim. Zeker geschikt voor een gezellige avond uit. Kleine minpunt: het was vrij druk en daardoor wat lawaaierig.\n\nReview door Sophie Mulder:\"",
+    "[REVIEW]\n\nReviewtekst:\n\"Fantastische ervaring! Het personeel kende het menu goed en kon uitstekende aanbevelingen doen. De wijnselectie was ook top. Komen zeker terug!\n\nReview door Hans Peters:\"",
+    "[REVIEW]\n\nReviewtekst:\n\"Teleurstellend. Het eten was lauw en de bediening onverschillig. Voor deze prijzen verwacht je meer. We zullen hier niet snel terugkomen.\""
+  ],
+  "enriched_chunks": [
+    "[Document: reviews_test_restaurant_123.txt]\n[Type: google_reviews]\n[Context: Deze passage behandelt een review van een restaurant, geschreven door iemand met de naam Jan de Vries. De review is waarschijnlijk afkomstig uit Google Reviews, aangezien het om een tekstbestand gaat dat als type \"google_reviews\" is geklassificeerd.]\n\n[REVIEW]\n\nReviewtekst:\n\"Review door Jan de Vries:\"",
+    "[Document: reviews_test_restaurant_123.txt]\n[Type: google_reviews]\n[Context: De passage behandelt een positieve review van een restaurant, waarin de reviewer Marie Jansen haar beleving beschrijft als \"geweldig\" met uitstekende service en heerlijk eten. De review is geschreven voor Google Reviews en wordt door Marie Jansen geplaatst.]\n\n[REVIEW]\n\nReviewtekst:\n\"Geweldig restaurant met uitstekende service en heerlijk eten. De biefstuk was perfect gebakken en het personeel was zeer vriendelijk. Absoluut een aanrader!\n\nReview door Marie Jansen:\"",
+    "[Document: reviews_test_restaurant_123.txt]\n[Type: google_reviews]\n[Context: De passage behandelt een recensie van een restaurant waarbij de klant kritiek heeft op de lange wachttijd en de service, maar wel presteert met de kwaliteit van het eten. De review is geschreven door Piet Bakker.]\n\n[REVIEW]\n\nReviewtekst:\n\"Eten was prima maar de wachttijd was te lang. We moesten 45 minuten wachten op ons hoofdgerecht. De kwaliteit van het eten was goed, maar de service kan beter.\n\nReview door Piet Bakker:\"",
+    "[Document: reviews_test_restaurant_123.txt]\n[Type: google_reviews]\n[Context: De passage behandelt een recensie van een restaurant, waarin de reviewer positieve punten noemt over de sfeer en gerechten, maar ook een kleine kritiek heeft op de drukte en lawaai. De review is geschreven door Sophie Mulder.]\n\n[REVIEW]\n\nReviewtekst:\n\"Goede sfeer en lekkere gerechten. De prijzen zijn redelijk en de porties zijn ruim. Zeker geschikt voor een gezellige avond uit. Kleine minpunt: het was vrij druk en daardoor wat lawaaierig.\n\nReview door Sophie Mulder:\"",
+    "[Document: reviews_test_restaurant_123.txt]\n[Type: google_reviews]\n[Context: De passage behandelt een positieve review over een restaurant, waarbij het personeel en de wijnselectie worden geprezen. De review is geschreven door Hans Peters.]\n\n[REVIEW]\n\nReviewtekst:\n\"Fantastische ervaring! Het personeel kende het menu goed en kon uitstekende aanbevelingen doen. De wijnselectie was ook top. Komen zeker terug!\n\nReview door Hans Peters:\"",
+    "[Document: reviews_test_restaurant_123.txt]\n[Type: google_reviews]\n[Context: De passage behandelt een negatieve review over een restaurant, waarin de klant teleurgesteld is over de kwaliteit van het eten en de service. De review vermeldt dat de prijzen te hoog waren voor de ontvangen diensten.]\n\n[REVIEW]\n\nReviewtekst:\n\"Teleurstellend. Het eten was lauw en de bediening onverschillig. Voor deze prijzen verwacht je meer. We zullen hier niet snel terugkomen.\""
+  ],
+  "metadata": {
+    "restaurant_name": "De Smakelijke Hoek",
+    "source": "ai4_orchestrator",
+    "tenant_id": "revsummer",
+    "project_id": "test_restaurant_123",
+    "user_id": null,
+    "filename": "reviews_test_restaurant_123.txt",
+    "mime_type": null
+  },
+  "timestamp": "2026-01-14T10:27:14.807349"
+}

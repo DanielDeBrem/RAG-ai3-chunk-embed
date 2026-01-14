@@ -1,0 +1,19 @@
+{
+  "doc_id": "info_test_restaurant_123.txt",
+  "raw_chunks": [
+    "Restaurant De Smakelijke Hoek\n\nAdres: Hoofdstraat 123, 1234 AB Amsterdam\nTelefoon: 020-1234567\nEmail: info@desmakelijkehoek.nl\n\nOpeningstijden:\nMa-Vr: 17:00 - 22:00\nZa-Zo: 12:00 - 22:00\n\nKeuken: Modern Nederlands met internationale invloeden\nAantal zitplaatsen: 60\nParkeren: Betaald parkeren in de buurt\nToegankelijkheid: Rolstoeltoegankelijk"
+  ],
+  "enriched_chunks": [
+    "[Document: info_test_restaurant_123.txt]\n[Type: generic]\n[Context: De passage behandelt de informatie over een restaurant genaamd \"Restaurant De Smakelijke Hoek\" met details over adres, telefoonnummer, email en openingstijden. De tekst bevat ook informatie over de keuken, capaciteit en toegankelijkheid van het restaurant.]\n\nRestaurant De Smakelijke Hoek\n\nAdres: Hoofdstraat 123, 1234 AB Amsterdam\nTelefoon: 020-1234567\nEmail: info@desmakelijkehoek.nl\n\nOpeningstijden:\nMa-Vr: 17:00 - 22:00\nZa-Zo: 12:00 - 22:00\n\nKeuken: Modern Nederlands met internationale invloeden\nAantal zitplaatsen: 60\nParkeren: Betaald parkeren in de buurt\nToegankelijkheid: Rolstoeltoegankelijk"
+  ],
+  "metadata": {
+    "restaurant_name": "De Smakelijke Hoek",
+    "tenant_id": "revsummer",
+    "project_id": "test_restaurant_123",
+    "user_id": null,
+    "filename": "info_test_restaurant_123.txt",
+    "mime_type": null,
+    "source": "ai4_orchestrator"
+  },
+  "timestamp": "2026-01-14T10:27:25.027390"
+}

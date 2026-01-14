@@ -578,6 +578,18 @@ def get_pytorch_device(prefer_gpu: bool = True, min_free_mb: int = 2000) -> str:
     if not torch.cuda.is_available():
         return "cpu"
     
+    # Als CUDA_VISIBLE_DEVICES is gezet, gebruik altijd cuda:0
+    # Want CUDA remapt de zichtbare GPU's naar indices 0, 1, 2, etc
+    cuda_visible = os.getenv("CUDA_VISIBLE_DEVICES")
+    if cuda_visible is not None:
+        # Alleen GPU's in CUDA_VISIBLE_DEVICES zijn zichtbaar, als cuda:0, cuda:1, etc.
+        visible_count = torch.cuda.device_count()
+        if visible_count > 0:
+            logger.info(f"[GPU Manager] CUDA_VISIBLE_DEVICES={cuda_visible}, using cuda:0 (visible GPUs: {visible_count})")
+            return "cuda:0"
+        return "cpu"
+    
+    # Geen CUDA_VISIBLE_DEVICES, gebruik gpu_manager om beste te kiezen
     best_gpu = gpu_manager.get_best_gpu(min_free_mb)
     if best_gpu >= 0:
         return f"cuda:{best_gpu}"

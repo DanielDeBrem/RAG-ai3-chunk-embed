@@ -1,0 +1,20 @@
+{
+  "doc_id": "menu_test_20.txt",
+  "raw_chunks": [
+    "=== Voorgerechten ===\n\nBruschetta\nGeroosterd brood met tomaat\n\u20ac 7.50"
+  ],
+  "enriched_chunks": [
+    "[Document: menu_test_20.txt]\n[Type: menu]\n[Context: De passage behandelt het onderdeel \"Voorgerechten\" uit een menu, waarin verschillende opties worden beschreven. De eerste optie is Bruschetta, een gerecht bestaande uit geroosterd brood met tomaat, dat \u20ac 7,50 kost.]\n\n=== Voorgerechten ===\n\nBruschetta\nGeroosterd brood met tomaat\n\u20ac 7.50"
+  ],
+  "metadata": {
+    "item_count": 2,
+    "restaurant_name": "Test Restaurant",
+    "tenant_id": "revsummer",
+    "project_id": "test_20",
+    "user_id": null,
+    "filename": "menu_test_20.txt",
+    "mime_type": null,
+    "source": "ai4_orchestrator"
+  },
+  "timestamp": "2026-01-14T10:55:21.740574"
+}

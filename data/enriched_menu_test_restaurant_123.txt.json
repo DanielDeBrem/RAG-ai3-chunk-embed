@@ -1,0 +1,29 @@
+{
+  "doc_id": "menu_test_restaurant_123.txt",
+  "raw_chunks": [
+    "[MENU ITEM]\n\nGerecht: Biefstuk met friet\nCategorie: Overig\nOmschrijving: Malse biefstuk van de grill met verse frietjes en huisgemaakte kruidenboter\nPrijs: 24.50 EUR",
+    "[MENU ITEM]\n\nGerecht: Caesarsalade met kip\nCategorie: Hoofdgerecht\nOmschrijving: Verse romaine sla met gegrilde kip, parmezaanse kaas, croutons en Caesar dressing\nPrijs: 12.00 EUR",
+    "[MENU ITEM]\n\nGerecht: Tiramisu\nCategorie: Overig\nOmschrijving: Klassieke Italiaanse tiramisu met mascarpone, koffie en cacao\nPrijs: 7.50 EUR",
+    "[MENU ITEM]\n\nGerecht: Gegrilde zalm\nCategorie: Overig\nOmschrijving: Verse zalm met gegrilde groenten en citroenboterraus\nPrijs: 22.00 EUR",
+    "[MENU ITEM]\n\nGerecht: Vegetarische pasta\nCategorie: Overig\nOmschrijving: Penne met gegrilde groenten, zongedroogde tomaten en basilicumpesto\nPrijs: 15.50 EUR",
+    "[MENU ITEM]\n\nGerecht: Huisgemaakte tomatensoep\nCategorie: Overig\nOmschrijving: Romige tomatensoep met verse basilicum en knoflook croutons\nPrijs: 6.50 EUR"
+  ],
+  "enriched_chunks": [
+    "[Document: menu_test_restaurant_123.txt]\n[Type: menu]\n[Context: De passage behandelt een menu-item voor een restaurant, specifiek een gerecht genaamd \"Biefstuk met friet\". De prijs hiervan bedraagt 24,50 EUR.]\n\n[MENU ITEM]\n\nGerecht: Biefstuk met friet\nCategorie: Overig\nOmschrijving: Malse biefstuk van de grill met verse frietjes en huisgemaakte kruidenboter\nPrijs: 24.50 EUR",
+    "[Document: menu_test_restaurant_123.txt]\n[Type: menu]\n[Context: De passage behandelt een menu-item voor een restaurant, specifiek een hoofdgerecht genaamd Caesarsalade met kip. De prijs van dit gerecht bedraagt 12,00 EUR.]\n\n[MENU ITEM]\n\nGerecht: Caesarsalade met kip\nCategorie: Hoofdgerecht\nOmschrijving: Verse romaine sla met gegrilde kip, parmezaanse kaas, croutons en Caesar dressing\nPrijs: 12.00 EUR",
+    "[Document: menu_test_restaurant_123.txt]\n[Type: menu]\n[Context: De passage behandelt een menu-item voor een restaurant, specifiek een gerecht genaamd Tiramisu. De prijs hiervan bedraagt 7,50 EUR.]\n\n[MENU ITEM]\n\nGerecht: Tiramisu\nCategorie: Overig\nOmschrijving: Klassieke Italiaanse tiramisu met mascarpone, koffie en cacao\nPrijs: 7.50 EUR",
+    "[Document: menu_test_restaurant_123.txt]\n[Type: menu]\n[Context: De passage behandelt een menu-item voor een restaurant, specifiek een gerecht genaamd \"Gegrilde zalm\". De prijs van dit gerecht bedraagt 22.00 EUR.]\n\n[MENU ITEM]\n\nGerecht: Gegrilde zalm\nCategorie: Overig\nOmschrijving: Verse zalm met gegrilde groenten en citroenboterraus\nPrijs: 22.00 EUR",
+    "[Document: menu_test_restaurant_123.txt]\n[Type: menu]\n[Context: De passage behandelt een gerecht uit het menu van een restaurant, specifiek een vegetarische pasta met details over ingredi\u00ebnten en prijs. De prijs bedraagt 15,50 EUR.]\n\n[MENU ITEM]\n\nGerecht: Vegetarische pasta\nCategorie: Overig\nOmschrijving: Penne met gegrilde groenten, zongedroogde tomaten en basilicumpesto\nPrijs: 15.50 EUR",
+    "[Document: menu_test_restaurant_123.txt]\n[Type: menu]\n[Context: De passage behandelt een gerecht dat wordt aangeboden op het menu van een restaurant, specifiek \"Huisgemaakte tomatensoep\". De prijs hiervan bedraagt 6,50 EUR.]\n\n[MENU ITEM]\n\nGerecht: Huisgemaakte tomatensoep\nCategorie: Overig\nOmschrijving: Romige tomatensoep met verse basilicum en knoflook croutons\nPrijs: 6.50 EUR"
+  ],
+  "metadata": {
+    "restaurant_name": "De Smakelijke Hoek",
+    "tenant_id": "revsummer",
+    "project_id": "test_restaurant_123",
+    "user_id": null,
+    "filename": "menu_test_restaurant_123.txt",
+    "mime_type": null,
+    "source": "ai4_orchestrator"
+  },
+  "timestamp": "2026-01-14T10:27:23.179576"
+}

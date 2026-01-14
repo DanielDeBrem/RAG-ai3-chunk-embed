@@ -1,0 +1,25 @@
+{
+  "doc_id": "938 - RECRON Voorwaarden Toeristisch Verblijf  (blauw) - Nederlands.pdf",
+  "raw_chunks": [
+    "[PAGE 1]\n\n[PAGE 2]"
+  ],
+  "enriched_chunks": [
+    "[Document: 938 - RECRON Voorwaarden Toeristisch Verblijf  (blauw) - Nederlands.pdf]\n[Type: generic_doc]\n[Context: Deze passage behandelt de structuur en indeling van een document, specifiek een voorwaardenoverzicht voor toeristisch verblijf. De passage bevat informatie over de paginering van het document.]\n\n[PAGE 1]\n\n[PAGE 2]"
+  ],
+  "metadata": {
+    "filename": "938 - RECRON Voorwaarden Toeristisch Verblijf  (blauw) - Nederlands.pdf",
+    "mime_type": "application/pdf",
+    "file_id": "019e03f6-b7d2-42c6-aa92-aca7891d03fc",
+    "analyzer": {
+      "document_type": "generic_doc",
+      "chunk_strategy": "default",
+      "language": "unknown",
+      "domain": null
+    },
+    "tenant_id": "b387cc10872e43c2805a98b61cb8d016",
+    "project_id": "d9864f1eb64f490e86e047de06cab731",
+    "user_id": "user-admin",
+    "source": "ai4_orchestrator"
+  },
+  "timestamp": "2026-01-12T09:47:50.313080"
+}

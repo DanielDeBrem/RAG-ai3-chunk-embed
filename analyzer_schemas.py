@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 
 from pydantic import BaseModel, Field
 
@@ -21,8 +21,8 @@ class DocumentAnalysis(BaseModel):
     suggested_chunk_strategy: str
     suggested_embed_model: str
 
-    # extra hints/flags/metadata
-    extra: Dict[str, str] = Field(default_factory=dict)
+    # extra hints/flags/metadata (kan strings, lists, ints, floats bevatten)
+    extra: Dict[str, Any] = Field(default_factory=dict)
 
 
 class AnalyzeRequest(BaseModel):

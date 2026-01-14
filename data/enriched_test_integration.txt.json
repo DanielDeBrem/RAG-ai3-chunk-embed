@@ -1,0 +1,18 @@
+{
+  "doc_id": "test_integration.txt",
+  "raw_chunks": [
+    "[PAGE 1]\nThis is a test document for AI-3 DataFactory integration.\n\nSection 1: Introduction\nThis document tests the complete RAG pipeline from AI-4 to AI-3.\nThe DataFactory on AI-3 handles OCR, chunking, enrichment, and embedding.\n\nSection 2: Key Features\n- Automatic OCR detection for scanned PDFs\n- 5 different chunking strategies (page_plus_table_aware is recommended)\n- 6x parallel LLM enrichment\n- BGE-m3 embeddings (1024-dim)\n- FAISS vector search with deduplication\n\nSection 3: Performance\nSmall documents (1-2MB): 30-60 seconds\nMedium documents (5-10MB): 2-3 minutes\nLarge documents (45MB+): 8-10 minutes\nThroughput: ~5 MB/min\n\nSection 4: Quality Metrics\nOCR Accuracy: 95%+\nChunk Quality: LLM-enhanced\nSearch Accuracy: 67%+ validated\nEmbedding Quality: state-of-the-art BGE-m3\n\nSection 5: Conclusion\nThe AI-3 DataFactory provides production-ready RAG capabilities\nfor AI-4 to build user-facing applications."
+  ],
+  "enriched_chunks": [
+    "[Document: test_integration.txt]\n[Type: generic]\n[Context: De passage behandelt de integratie en functionaliteit van een DataFactory op AI-3, die wordt gebruikt voor het verwerken van documenten met behulp van OCR, chunking, enrichment en embedding. De passage beschrijft de belangrijkste kenmerken en prestaties van deze integratie, inclusief OCR-detectie, chunking-strategie\u00ebn en zoekfuncties.]\n\n[PAGE 1]\nThis is a test document for AI-3 DataFactory integration.\n\nSection 1: Introduction\nThis document tests the complete RAG pipeline from AI-4 to AI-3.\nThe DataFactory on AI-3 handles OCR, chunking, enrichment, and embedding.\n\nSection 2: Key Features\n- Automatic OCR detection for scanned PDFs\n- 5 different chunking strategies (page_plus_table_aware is recommended)\n- 6x parallel LLM enrichment\n- BGE-m3 embeddings (1024-dim)\n- FAISS vector search with deduplication\n\nSection 3: Performance\nSmall documents (1-2MB): 30-60 seconds\nMedium documents (5-10MB): 2-3 minutes\nLarge documents (45MB+): 8-10 minutes\nThroughput: ~5 MB/min\n\nSection 4: Quality Metrics\nOCR Accuracy: 95%+\nChunk Quality: LLM-enhanced\nSearch Accuracy: 67%+ validated\nEmbedding Quality: state-of-the-art BGE-m3\n\nSection 5: Conclusion\nThe AI-3 DataFactory provides production-ready RAG capabilities\nfor AI-4 to build user-facing applications."
+  ],
+  "metadata": {
+    "tenant_id": "test-tenant",
+    "project_id": "test-integration",
+    "user_id": "test-user",
+    "filename": "test_integration.txt",
+    "mime_type": "text/plain",
+    "source": "ai4_orchestrator"
+  },
+  "timestamp": "2026-01-12T10:36:35.323910"
+}

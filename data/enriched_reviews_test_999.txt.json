@@ -1,0 +1,20 @@
+{
+  "doc_id": "reviews_test_999.txt",
+  "raw_chunks": [
+    "Review door Jan de Vries:\nRating: 5/5\nUitstekend restaurant met heerlijk eten en vriendelijke bediening. De sfeer was geweldig!\n\nReview door Marie Jansen:\nRating: 4/5\nGoede kwaliteit eten, maar de wachttijd was wat lang. Desondanks een aanrader.\n\nReview door Piet Bakker:\nRating: 3/5\nGemiddeld. Prijs-kwaliteit verhouding kan beter."
+  ],
+  "enriched_chunks": [
+    "[Document: reviews_test_999.txt]\n[Type: google_reviews]\n[Context: De passage behandelt reviews van drie verschillende restaurants, waarvan twee een positieve en \u00e9\u00e9n een gemengde beoordeling hebben gekregen. De reviews zijn geschreven door Jan de Vries, Marie Jansen en Piet Bakker.]\n\nReview door Jan de Vries:\nRating: 5/5\nUitstekend restaurant met heerlijk eten en vriendelijke bediening. De sfeer was geweldig!\n\nReview door Marie Jansen:\nRating: 4/5\nGoede kwaliteit eten, maar de wachttijd was wat lang. Desondanks een aanrader.\n\nReview door Piet Bakker:\nRating: 3/5\nGemiddeld. Prijs-kwaliteit verhouding kan beter."
+  ],
+  "metadata": {
+    "source": "ai4_orchestrator",
+    "review_count": 3,
+    "restaurant_name": "Test Restaurant",
+    "tenant_id": "revsummer",
+    "project_id": "test_999",
+    "user_id": null,
+    "filename": "reviews_test_999.txt",
+    "mime_type": null
+  },
+  "timestamp": "2026-01-14T09:09:21.817881"
+}
