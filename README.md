@@ -57,26 +57,40 @@ AI-4 (Orchestrator)          AI-3 (Processing Backend)
 
 ## 🚀 Starten
 
-### Alle services starten:
+### ⚡ Alle services starten (AANBEVOLEN):
 
 ```bash
 ./start_AI3_services.sh
 ```
 
-### Individuele services:
+Dit start automatisch:
+- DataFactory (GPU 0, port 9000)
+- Doc Analyzer (CPU, port 9100)
+- Reranker (GPU 1, port 9200)
+- OCR Service (GPU 2, port 9300)
+- 4x Ollama instances (GPU 4-7, ports 11435-11438)
+
+**GPU Allocatie:**
+- GPU 0: DataFactory (BGE-m3 embeddings)
+- GPU 1: Reranker (BGE-reranker-v2-m3)
+- GPU 2: OCR Service (EasyOCR)
+- GPU 3: RESERVED (future expansion)
+- GPU 4-7: 4x Ollama (llama3.1:8b parallel enrichment)
+
+### Individuele services (alleen voor testing/debugging):
 
 ```bash
-# Embedding service (poort 8000)
-uvicorn embedding_service:app --host 0.0.0.0 --port 8000
+# DataFactory (poort 9000, GPU 0)
+CUDA_VISIBLE_DEVICES=0 uvicorn app:app --host 0.0.0.0 --port 9000
 
-# DataFactory (poort 9000)
-uvicorn app:app --host 0.0.0.0 --port 9000
-
-# Document Analyzer (poort 9100)
+# Document Analyzer (poort 9100, CPU)
 uvicorn doc_analyzer_service:app --host 0.0.0.0 --port 9100
 
-# Reranker (poort 9200)
-uvicorn reranker_service:app --host 0.0.0.0 --port 9200
+# Reranker (poort 9200, GPU 1)
+CUDA_VISIBLE_DEVICES=1 uvicorn reranker_service:app --host 0.0.0.0 --port 9200
+
+# OCR Service (poort 9300, GPU 2)
+CUDA_VISIBLE_DEVICES=2 python ocr_service.py --port 9300
 ```
 
 ## 📡 API Endpoints
@@ -326,12 +340,17 @@ Belangrijkste packages:
 
 ## 📚 Documentatie
 
-- **`DOELARCHITECTUUR.md`** - Volledige uitleg van AI-3/AI-4 scheiding
-- **`ARCHITECTURE.md`** - Technische architectuur details
-- **`AI4_INTEGRATION_GUIDE.md`** - Integratie instructies voor AI-4
-- **`DATAFACTORY_API_SPEC.md`** - API specificaties
-- **`CHUNKING_STRATEGIES_README.md`** - Chunking strategieën
+**Core Docs (in `docs/`):**
+- **`docs/DOELARCHITECTUUR.md`** - Volledige uitleg van AI-3/AI-4 scheiding
+- **`docs/ARCHITECTURE.md`** - Technische architectuur details
+- **`docs/OPERATIONS.md`** - Deployment, GPU allocation, monitoring
+- **`docs/API_REFERENCE.md`** - Complete API specificaties
+- **`docs/CHUNKING_GUIDE.md`** - Chunking strategieën
+- **`docs/AI4_INTEGRATION_GUIDE.md`** - Integratie instructies voor AI-4
+- **`docs/CHANGELOG.md`** - Version history
+
+**Tests:** Alle test files staan in `tests/`
 
 ---
 
-**Laatste update:** 12 januari 2026
+**Laatste update:** 14 januari 2026
